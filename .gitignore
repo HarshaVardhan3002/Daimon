@@ -29,8 +29,11 @@ android/app/release.keystore
 *.keystore
 *.p12
 *.pfx
+*.p8
 *.key
 *.pem
+*.cer
+*.crt
 *.mobileprovision
 *.apk
 *.aab
@@ -46,11 +49,17 @@ dev/live-model-proxy/runtime/
 dev/live-model-proxy/state/
 dev/live-model-proxy/data/
 dev/live-model-proxy/uploads/
+dev/live-model-proxy/.git/
 
 # Logs, temporary captures, review artifacts, and device forensics
 *.log
 *.out
 *.err
+*.trace
+*.db
+*.sqlite
+*.sqlite3
+*.realm
 logs/
 /artifacts/
 /review-captures/
@@ -58,6 +67,17 @@ logs/
 /tmp/
 /.interface-design/
 /.capture-review.mjs
+/LEARNING_PRODUCT_SPEC.md
+/implementation_plan.html
+/LICENSE
+/src/chat/fixture.ts
+/src/preferences/
+/src/learning/*
+!/src/learning/liveProgress.ts
+/src/liveModel/client.ts
+/src/liveModel/index.ts
+/src/liveModel/validate.ts
+.claude/
 
 # Platform and editor metadata
 /ios/
