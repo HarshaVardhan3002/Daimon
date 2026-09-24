@@ -1,0 +1,69 @@
+# Dependencies and package-manager output
+node_modules/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+
+# Expo / Metro generated state
+.expo/
+.expo-bootstrap/
+dist/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+
+# Android generated output only; keep the native project source tracked
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/.cxx/
+android/app/.cxx/
+android/app/debug.keystore
+android/app/release.keystore
+
+# Signing material, certificates, and packaged builds
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+*.mobileprovision
+*.apk
+*.aab
+*.apks
+*.jsbundle
+
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
+dev/live-model-proxy/.env*
+dev/live-model-proxy/runtime/
+dev/live-model-proxy/state/
+dev/live-model-proxy/data/
+dev/live-model-proxy/uploads/
+
+# Logs, temporary captures, review artifacts, and device forensics
+*.log
+*.out
+*.err
+logs/
+/artifacts/
+/review-captures/
+/forensics/
+/tmp/
+/.interface-design/
+/.capture-review.mjs
+
+# Platform and editor metadata
+/ios/
+.kotlin/
+.metro-health-check*
+.DS_Store
+Thumbs.db
+*.orig.*
+.idea/
