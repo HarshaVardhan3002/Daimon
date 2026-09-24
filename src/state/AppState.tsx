@@ -5,7 +5,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import type { Locale, ThemeMode } from '../design/theme';
 import type { LiveModelActivity } from '../liveModel/types';
 import type { LiveActivityProgress } from '../learning/liveProgress';
-import { decodeChatSession, type ChatSession } from './chatSession';
+import { decodeChatSession, type ChatRequestError, type ChatSession } from './chatSession';
 import { normalizeRestoredTurn, updateTurnList } from './turns';
 import { quarantineRawPayload, readStoredJSON } from './storageHydration';
 import { decodePersistedRichContent, type PersistedRichContent } from '../chat/richReply';
@@ -14,7 +14,7 @@ import { decodeDocumentAttachment, type DocumentAttachment } from '../chat/docum
 import { createFreshChatId, prepareColdStart, restoreSavedChat } from './coldStart';
 
 const KEY = 'assistant:first-slice:v1';
-export type Turn = { id: string; prompt: string; locale: Locale; status: 'streaming' | 'complete' | 'stopped'; answer: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; documentInfo?: { pagesRead: number | null; pagesTotal: number | null; characters: number; truncated: boolean }; rich?: PersistedRichContent; liveActivity?: LiveModelActivity; liveProgress?: LiveActivityProgress };
+export type Turn = { id: string; prompt: string; locale: Locale; status: 'streaming' | 'complete' | 'stopped' | 'failed'; answer: string; requestError?: ChatRequestError; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; documentInfo?: { pagesRead: number | null; pagesTotal: number | null; characters: number; truncated: boolean }; rich?: PersistedRichContent; liveActivity?: LiveModelActivity; liveProgress?: LiveActivityProgress };
 export type { ChatMessage, ChatRequestError, ChatSession, PendingChatRequest } from './chatSession';
 export type SavedConversation = { id: string; title: string; turns: Turn[]; draft?: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; session?: ChatSession };
 type Stored = { theme: ThemeMode; locale: Locale; draft: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; conversation: Turn[]; activeChatId: string; activeSession: ChatSession; savedConversations: SavedConversation[] };
@@ -41,7 +41,8 @@ function shouldPrepareColdStartForLaunch(): Promise<boolean> {
 
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
 function decodeTurn(value: unknown): Turn {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.prompt !== 'string' || typeof value.answer !== 'string' || (value.locale !== 'en' && value.locale !== 'de') || !['streaming', 'complete', 'stopped'].includes(String(value.status))) throw new Error('Stored conversation turn is invalid.');
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.prompt !== 'string' || typeof value.answer !== 'string' || (value.locale !== 'en' && value.locale !== 'de') || !['streaming', 'complete', 'stopped', 'failed'].includes(String(value.status))) throw new Error('Stored conversation turn is invalid.');
+  const requestError = ['disconnected', 'failed', 'cancelled', 'interrupted', 'document_too_large', 'document_too_many_pages', 'document_password', 'document_no_text', 'document_invalid', 'document_encoding'].includes(String(value.requestError)) ? value.requestError as ChatRequestError : undefined;
   const rich = decodePersistedRichContent(value.rich);
   const imageAttachment = decodeImageAttachment(value.imageAttachment);
   const documentAttachment = decodeDocumentAttachment(value.documentAttachment);
@@ -53,7 +54,7 @@ function decodeTurn(value: unknown): Turn {
       || (value.documentInfo.pagesTotal !== null && (!Number.isInteger(value.documentInfo.pagesTotal) || (value.documentInfo.pagesTotal as number) < 1))) throw new Error('Stored document read metadata is invalid.');
     documentInfo = { pagesRead: value.documentInfo.pagesRead as number | null, pagesTotal: value.documentInfo.pagesTotal as number | null, characters: value.documentInfo.characters as number, truncated: value.documentInfo.truncated };
   }
-  return normalizeRestoredTurn({ ...(value as unknown as Turn), ...(rich ? { rich } : { rich: undefined }), ...(imageAttachment ? { imageAttachment } : {}), ...(documentAttachment ? { documentAttachment } : {}), ...(documentInfo ? { documentInfo } : {}) });
+  return normalizeRestoredTurn({ ...(value as unknown as Turn), ...(requestError ? { requestError } : { requestError: undefined }), ...(rich ? { rich } : { rich: undefined }), ...(imageAttachment ? { imageAttachment } : {}), ...(documentAttachment ? { documentAttachment } : {}), ...(documentInfo ? { documentInfo } : {}) });
 }
 function decodeStored(value: unknown): Stored {
   if (!isRecord(value)) throw new Error('Stored app state is invalid.');

@@ -148,6 +148,33 @@ test('pending request metadata is archived without retrying and fresh session is
   assert.deepEqual(fresh.activeSession, {});
 });
 
+test('an optimistic pending bubble and its original retry identity survive archive and saved-chat reopen', () => {
+  const pendingChatRequest = {
+    prompt: 'Use the attached PDF',
+    draftSnapshot: 'Use the attached PDF',
+    pendingTurnId: 'pending-turn-1',
+    status: 'loading',
+    messages: [{ role: 'user', content: 'Use the attached PDF' }],
+  };
+  const olderRetry = { ...pendingChatRequest, pendingTurnId: 'failed-turn-0', status: 'error', error: 'failed' };
+  const source = baseState({
+    conversation: [turn({ id: 'pending-turn-1', prompt: 'Use the attached PDF', status: 'streaming', answer: '' })],
+    activeSession: { pendingChatRequest, retryableChatRequests: [olderRetry] },
+  });
+  const cold = prepareColdStart(source, 'fresh');
+  const saved = cold.savedConversations.find(chat => chat.id === source.activeChatId);
+
+  assert.equal(saved.turns[0].status, 'stopped', 'a killed request is shown as interrupted rather than loading forever');
+  assert.equal(saved.turns[0].id, pendingChatRequest.pendingTurnId);
+  assert.equal(saved.session.pendingChatRequest.pendingTurnId, pendingChatRequest.pendingTurnId);
+  assert.equal(saved.session.retryableChatRequests[0].pendingTurnId, olderRetry.pendingTurnId);
+
+  const reopened = restoreSavedChat(cold, source.activeChatId);
+  assert.equal(reopened.conversation[0].id, pendingChatRequest.pendingTurnId);
+  assert.equal(reopened.activeSession.pendingChatRequest.pendingTurnId, pendingChatRequest.pendingTurnId);
+  assert.equal(reopened.activeSession.retryableChatRequests[0].pendingTurnId, olderRetry.pendingTurnId);
+});
+
 test('active chat replaces a duplicate Recent, sorts newest first, and caps history at 20', () => {
   const savedConversations = Array.from({ length: 21 }, (_, index) => ({
     id: index === 4 ? 'active-1' : `saved-${index}`,

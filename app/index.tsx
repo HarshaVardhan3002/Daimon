@@ -22,13 +22,15 @@ import { imageAttachmentDataUri, isSupportedImage, persistImageAttachment, type 
 import { DocumentAttachmentError, documentAttachmentPayload, persistDocumentAttachment, supportedDocumentMimeType } from '../src/chat/documentAttachment';
 import { useAppSettings } from '../src/state/AppState';
 import type { ChatRequestError, PendingChatRequest, Turn } from '../src/state/AppState';
-import { buildChatContext, canRetryPendingChat, documentContextAfterSuccess, documentRequestForPrompt, documentUriForPrompt, getLegacyActivityText, shouldShowChangedDraftMessage } from '../src/state/chatHistory';
+import { buildChatContext, documentContextAfterSuccess, documentRequestForPrompt, getLegacyActivityText } from '../src/state/chatHistory';
+import { beginChatSend, completePendingTurn, failPendingTurn, forgetRetryableRequest, isRegeneratingTurn, rememberRetryableRequest, shouldShowGlobalChatError, updatePendingTurn } from '../src/state/chatRequestFlow';
+import { updateTurnList } from '../src/state/turns';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
-  if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Dein Entwurf bleibt hier; die Anfrage ist gespeichert.' : 'Daimon can’t be reached right now. Your draft stays here, and the request is saved.';
-  if (error === 'cancelled') return locale === 'de' ? 'Antwort angehalten. Dein Entwurf bleibt hier; die Anfrage ist gespeichert.' : 'Response stopped. Your draft stays here, and the request is saved.';
+  if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
+  if (error === 'cancelled') return locale === 'de' ? 'Antwort angehalten. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Response stopped. Your message stays in the chat and can be retried.';
   if (error === 'interrupted') return locale === 'de' ? 'Die Antwort wurde unterbrochen. Du kannst es erneut versuchen.' : 'The response was interrupted. You can try again.';
   if (error === 'document_too_large') return locale === 'de' ? 'Die Datei ist größer als 8 MiB. Wähle eine kleinere Datei aus.' : 'This file is larger than 8 MiB. Choose a smaller file.';
   if (error === 'document_too_many_pages') return locale === 'de' ? 'Das PDF hat mehr als 60 Seiten. Teile es in kleinere Dateien auf.' : 'This PDF has more than 60 pages. Split it into smaller files.';
@@ -78,9 +80,16 @@ export default function HomeScreen() {
 
   const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
   const runChatRequest = useCallback(async (request: PendingChatRequest) => {
-    if (requestStatus === 'loading') return;
+    if (abortRef.current || requestRef.current?.status === 'loading') return;
+    const previousRequest = requestRef.current;
     requestRef.current = { ...request, status: 'loading', error: undefined };
-    setActiveSession(current => ({ ...current, pendingChatRequest: requestRef.current! }));
+    const activeRequest = requestRef.current;
+    setActiveSession(current => {
+      let retryable = current.retryableChatRequests;
+      if (previousRequest && previousRequest.pendingTurnId !== activeRequest.pendingTurnId) retryable = rememberRetryableRequest(retryable, previousRequest);
+      retryable = forgetRetryableRequest(retryable, activeRequest.pendingTurnId ?? '');
+      return { ...current, retryableChatRequests: retryable.length ? retryable : undefined, pendingChatRequest: activeRequest };
+    });
     setRequestStatus('loading'); setRequestError(null);
     const controller = new AbortController(); abortRef.current = controller;
     const requestDocument = request.documentAttachment ?? request.documentContextAttachment;
@@ -92,20 +101,19 @@ export default function HomeScreen() {
           ? [...request.messages.slice(0, -1), { ...lastMessage, image: await imageAttachmentDataUri(request.attachment) }]
           : request.messages;
       const result = await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal });
-      const id = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = request.pendingTurnId ?? `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const rich = result.message.rich ? await persistRichReply(result.message.rich, id) : undefined;
       const turn: Turn = { id, prompt: request.prompt, locale: request.locale, status: 'complete', answer: result.message.content, ...(request.attachment ? { imageAttachment: request.attachment } : {}), ...(request.documentAttachment ? { documentAttachment: request.documentAttachment } : {}), ...(request.documentAttachment && result.documentInfo ? { documentInfo: result.documentInfo } : {}), ...(rich ? { rich } : {}) };
       followsBottom.current = true;
       setConversation(previous => {
+        if (request.pendingTurnId) return completePendingTurn(previous, turn);
         const replacementIndex = request.replacementTurnId ? previous.findIndex(item => item.id === request.replacementTurnId) : -1;
         if (replacementIndex === previous.length - 1 && replacementIndex >= 0) return [...previous.slice(0, replacementIndex), turn];
         return [...previous, turn];
       });
-      setDraft(current => current === request.draftSnapshot ? '' : current);
-      setImageAttachment(current => current?.uri === request.attachment?.uri ? undefined : current);
-      setDocumentAttachment(current => current?.uri === request.documentAttachment?.uri ? undefined : current);
-      requestRef.current = null; setActiveSession(current => ({ ...current, activeDocumentContext: documentContextAfterSuccess(current.activeDocumentContext, request.documentAttachment, Boolean(request.attachment)), pendingChatRequest: undefined }));
-      setRequestStatus('idle'); setRequestError(null); Keyboard.dismiss();
+      if (requestRef.current?.pendingTurnId === request.pendingTurnId) requestRef.current = null;
+      setActiveSession(current => ({ ...current, activeDocumentContext: documentContextAfterSuccess(current.activeDocumentContext, request.documentAttachment, Boolean(request.attachment)), retryableChatRequests: forgetRetryableRequest(current.retryableChatRequests, request.pendingTurnId ?? ''), pendingChatRequest: current.pendingChatRequest?.pendingTurnId === request.pendingTurnId ? undefined : current.pendingChatRequest }));
+      setRequestStatus('idle'); setRequestError(null);
     } catch (error) {
       const cancelled = (error as { name?: string } | null)?.name === 'AbortError';
       const disconnected = error instanceof ChatClientError && error.code === 'PROXY_UNREACHABLE';
@@ -119,18 +127,33 @@ export default function HomeScreen() {
       const kind: ChatRequestError = cancelled ? 'cancelled' : disconnected ? 'disconnected' : documentError ?? 'failed';
       const failed: PendingChatRequest = { ...request, status: 'error', error: kind };
       requestRef.current = failed; setActiveSession(current => ({ ...current, pendingChatRequest: failed }));
+      if (request.pendingTurnId) setConversation(previous => failPendingTurn(previous, request.pendingTurnId!, kind));
       setRequestError(kind); setRequestStatus('error');
     } finally { if (abortRef.current === controller) abortRef.current = null; }
-  }, [requestStatus, setActiveSession, setConversation, setDraft, setImageAttachment, setDocumentAttachment]);
+  }, [setActiveSession, setConversation]);
 
   const send = useCallback(() => {
     const draftSnapshot = draft; const prompt = draftSnapshot.trim() || (documentAttachment ? locale === 'de' ? 'Fasse diese Datei zusammen.' : 'Summarize this file.' : locale === 'de' ? 'Was ist auf diesem Bild zu sehen?' : 'What is in this image?');
-    if ((!draftSnapshot.trim() && !imageAttachment && !documentAttachment) || requestStatus === 'loading') return;
+    if ((!draftSnapshot.trim() && !imageAttachment && !documentAttachment) || abortRef.current || requestRef.current?.status === 'loading') return;
     const requestDocument = documentRequestForPrompt(documentAttachment, Boolean(imageAttachment), activeSession.activeDocumentContext);
-    const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
+    const pendingTurnId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, pendingTurnId, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
+    const sendStart = beginChatSend(request, pendingTurnId);
+    setConversation(previous => [...previous, sendStart.turn]);
+    setDraft(sendStart.composerDraft);
+    setImageAttachment(current => current?.uri === sendStart.imageUri ? undefined : current);
+    setDocumentAttachment(current => current?.uri === sendStart.documentUri ? undefined : current);
     void runChatRequest(request);
-  }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, requestStatus, conversation, locale, runChatRequest]);
-  const retryRequest = useCallback(() => { const pending = requestRef.current; if (pending && canRetryPendingChat(pending, draft, imageAttachment?.uri, documentUriForPrompt(Boolean(imageAttachment), documentAttachment?.uri, activeSession.activeDocumentContext?.uri))) void runChatRequest(pending); }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, runChatRequest]);
+  }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, conversation, locale, runChatRequest, setConversation, setDraft, setImageAttachment, setDocumentAttachment]);
+  const retryRequest = useCallback((turnId?: string) => {
+    if (abortRef.current || requestRef.current?.status === 'loading') return;
+    const current = requestRef.current;
+    const pending = current?.pendingTurnId === turnId || !turnId ? current
+      : activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
+    if (!pending) return;
+    if (pending.pendingTurnId) setConversation(previous => updatePendingTurn(previous, pending.pendingTurnId!, 'streaming'));
+    void runChatRequest(pending);
+  }, [activeSession.retryableChatRequests, runChatRequest, setConversation]);
   const stopRequest = useCallback(() => abortRef.current?.abort(), []);
   const newChat = useCallback(() => {
     startNewChat(); setDrawerOpen(false); setProfileOpen(false); Keyboard.dismiss();
@@ -186,20 +209,25 @@ export default function HomeScreen() {
   }, [conversation, locale, shareText]);
 
   const hasCurrentContent = Boolean(conversation.length || draft.trim() || imageAttachment || documentAttachment || activeSession.activeDocumentContext || activeSession.pendingChatRequest || activeSession.pendingLiveRequest || activeSession.sampleSourceSelected);
-  const requestMatchesCurrent = canRetryPendingChat(requestRef.current, draft, imageAttachment?.uri, documentUriForPrompt(Boolean(imageAttachment), documentAttachment?.uri, activeSession.activeDocumentContext?.uri));
-  const retryAllowed = requestMatchesCurrent && !requestError?.startsWith('document_');
-  const requestErrorMessage = shouldShowChangedDraftMessage(Boolean(requestRef.current), requestMatchesCurrent, requestError)
-    ? (locale === 'de' ? 'Entwurf oder Anhang wurde geändert. Sende die aktuelle Nachricht, wenn du bereit bist.' : 'The draft or attachment changed. Send the current message when ready.')
-    : requestError ? errorText(locale, requestError) : '';
+  const retryAllowed = Boolean(requestRef.current && !requestError?.startsWith('document_'));
+  const requestErrorMessage = requestError ? errorText(locale, requestError) : '';
+  const showGlobalRequestError = shouldShowGlobalChatError(requestRef.current, requestStatus === 'error' && Boolean(requestError));
   const currentTitle = conversation[0]?.prompt ?? activeSession.pendingChatRequest?.prompt ?? activeSession.pendingLiveRequest?.request.prompt ?? (draft.trim().slice(0, 60) || (documentAttachment?.name || (imageAttachment ? (locale === 'de' ? 'Bild' : 'Image') : activeSession.sampleSourceSelected ? locale === 'de' ? 'Gespeicherter Chat' : 'Saved conversation' : '')));
   const showCurrent = hasCurrentContent && currentTitle.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
   const filteredSaved = savedConversations.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const isEmpty = conversation.length === 0 && requestStatus !== 'loading';
+  const isEmpty = conversation.length === 0;
   const rootStyle = useMemo(() => ({ flex: 1, backgroundColor: c.canvas }), [c.canvas]);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: drawerProgress.value * 0.38 }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(drawerProgress.value, [0, 1], [-drawerWidth, 0]) }] }));
   const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen), [drawerOpen, gestureStartX, openDrawer]);
   const drawerGesture = useMemo(() => Gesture.Pan().activeOffsetX(-12).failOffsetY([-10, 10]).onEnd(event => { if (event.translationX < -48) runOnJS(closeDrawer)(); }).enabled(drawerOpen), [closeDrawer, drawerOpen]);
+
+  const retryableRequestForTurn = (turnId: string) => {
+    const active = requestRef.current;
+    if (active?.pendingTurnId === turnId && active.status === 'error') return active.error?.startsWith('document_') ? undefined : active;
+    const stored = activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
+    return stored?.error?.startsWith('document_') ? undefined : stored;
+  };
 
   const chooseAttachment = useCallback(async (kind: 'camera' | 'photos' | 'files') => {
     setAttachmentSheetOpen(false);
@@ -275,7 +303,13 @@ export default function HomeScreen() {
             {conversation.at(-1)?.id === turn.id && turn.status === 'complete' && !turn.imageAttachment && !turn.rich && !turn.id.startsWith('sample-') && !turn.liveActivity && !turn.liveProgress && turn.prompt.trim() && turn.answer.trim() && !draft.trim() && !imageAttachment ? <Pressable disabled={requestStatus === 'loading'} onPress={() => regenerateTurn(turn)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Antwort neu generieren' : 'Regenerate answer'} accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 44, borderRadius: 12, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 11, opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="rotate-cw" size={16} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Neu generieren' : 'Regenerate'}</Text></Pressable> : null}
           </View> : null}
         </> : null}
-      </View> : turn.status === 'stopped' ? <Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 13, marginHorizontal: 20, marginTop: 10 }}>{locale === 'de' ? 'Antwort angehalten' : 'Response stopped'}</Text> : null}
+      </View> : null}
+      {isRegeneratingTurn(requestRef.current, turn.id, requestStatus === 'loading') ? <View accessibilityLiveRegion="polite" style={{ marginTop: 12, marginBottom: 18, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{locale === 'de' ? 'Antwort wird neu generiert…' : 'Regenerating response…'}</Text></View> : null}
+      {turn.status === 'streaming' ? <View accessibilityLiveRegion="polite" style={{ marginTop: 15, marginBottom: 24, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{t.thinking}</Text></View> : null}
+      {turn.status === 'stopped' || turn.status === 'failed' ? <View style={{ marginHorizontal: 20, marginTop: 10, marginBottom: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text style={{ flex: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 13 }}>{turn.requestError ? errorText(locale, turn.requestError) : turn.status === 'stopped' ? (locale === 'de' ? 'Antwort angehalten' : 'Response stopped') : (locale === 'de' ? 'Antwort konnte nicht geladen werden' : 'Couldn’t get a response')}{!turn.requestError?.startsWith('document_') && !retryableRequestForTurn(turn.id) && turn.status === 'failed' ? (locale === 'de' ? ' · Erneut versuchen nicht mehr verfügbar' : ' · Retry is no longer available') : ''}</Text>
+        {retryableRequestForTurn(turn.id) ? <Pressable disabled={requestStatus === 'loading'} onPress={() => retryRequest(turn.id)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Diese Nachricht erneut senden' : 'Retry this message'} accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 44, paddingHorizontal: 11, borderRadius: 14, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Text style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 13 }}>{locale === 'de' ? 'Erneut' : 'Retry'}</Text></Pressable> : null}
+      </View> : null}
     </View>;
   };
 
@@ -292,18 +326,11 @@ export default function HomeScreen() {
             {!keyboardVisible ? <><Text style={{ width: '100%', color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 26, lineHeight: 34, textAlign: 'center', marginBottom: 9 }}>{t.greeting}</Text><Text style={{ width: '100%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, textAlign: 'center' }}>{t.greetingHint}</Text></> : null}
           </View> : <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 18 }} keyboardShouldPersistTaps="handled" onScroll={event => { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; followsBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 128; }} scrollEventThrottle={80} onContentSizeChange={(_w, h) => { if (followsBottom.current) scrollRef.current?.scrollTo({ y: Math.max(0, h), animated: false }); }}>
             {conversation.map(renderAnswer)}
-            {requestStatus === 'loading' ? <View>
-              {!requestRef.current?.replacementTurnId ? <View style={{ alignItems: 'flex-end', paddingHorizontal: 20, paddingTop: 10 }}><View style={{ backgroundColor: c.user, maxWidth: '84%', borderRadius: 19, paddingHorizontal: 12, paddingVertical: 11 }}>
-                {requestRef.current?.attachment ? <Image source={{ uri: requestRef.current.attachment.uri }} accessibilityLabel={locale === 'de' ? 'Angehängtes Bild' : 'Attached image'} resizeMode="cover" style={{ width: 188, height: 142, borderRadius: 12, marginBottom: 8 }} /> : null}
-                {requestRef.current?.documentAttachment ? <View style={{ width: '100%', maxWidth: '100%', minWidth: 0, alignSelf: 'stretch', minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 12, backgroundColor: c.surface }}><View style={{ width: 28, height: 28, flexShrink: 0, alignItems: 'center', justifyContent: 'center' }}><Feather name="file-text" size={17} color={c.accent} /></View><Text numberOfLines={1} ellipsizeMode="middle" style={{ flex: 1, minWidth: 0, flexShrink: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{requestRef.current.documentAttachment.name}</Text></View> : null}
-                <Text selectable style={{ color: c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 23 }}>{requestRef.current?.prompt}</Text></View></View> : null}
-              <View accessibilityLiveRegion="polite" style={{ marginTop: 20, marginBottom: 28, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{t.thinking}</Text></View>
-            </View> : null}
           </ScrollView>}
           <View style={{ paddingHorizontal: 22, paddingTop: 6, paddingBottom: Math.max(insets.bottom, keyboardVisible ? 45 : 8) + (keyboardVisible ? 0 : 3) }}>
-            {requestStatus === 'error' && requestError ? <View accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 44, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 14, backgroundColor: c.raised, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {showGlobalRequestError && requestError ? <View accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 44, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 14, backgroundColor: c.raised, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={{ flex: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{requestErrorMessage}</Text>
-              {!requestError.startsWith('document_') ? <Pressable disabled={!retryAllowed} onPress={retryRequest} accessibilityRole="button" accessibilityState={{ disabled: !retryAllowed }} style={{ minHeight: 38, paddingHorizontal: 8, justifyContent: 'center', opacity: retryAllowed ? 1 : 0.45 }}><Text style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{locale === 'de' ? 'Erneut' : 'Retry'}</Text></Pressable> : null}
+              {!requestError.startsWith('document_') ? <Pressable disabled={!retryAllowed} onPress={() => retryRequest()} accessibilityRole="button" accessibilityState={{ disabled: !retryAllowed }} style={{ minHeight: 38, paddingHorizontal: 8, justifyContent: 'center', opacity: retryAllowed ? 1 : 0.45 }}><Text style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{locale === 'de' ? 'Erneut' : 'Retry'}</Text></Pressable> : null}
               <Pressable onPress={() => { setRequestStatus('idle'); setRequestError(null); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Hinweis schließen' : 'Dismiss message'} style={{ width: 30, height: 36, alignItems: 'center', justifyContent: 'center' }}><Feather name="x" size={16} color={c.muted} /></Pressable>
             </View> : null}
             {legacyRequestPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 40, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: c.raised }}><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
