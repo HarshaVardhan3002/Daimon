@@ -8,7 +8,7 @@ import type { ReasoningMode } from './reasoningEffort';
 type Props = {
   value: ReasoningMode;
   onChange: (mode: ReasoningMode) => void;
-  labels: { instant: string; medium: string; high: string; effort: string; defaultModel: string };
+  labels: { instant: string; medium: string; high: string; effort: string; chooseEffort: string };
   colors: { text: string; muted: string; faint: string; accent: string; line: string; selected: string };
   reducedMotion: boolean;
 };
@@ -28,6 +28,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
   const trackWidth = useSharedValue(0);
   const knobPosition = useSharedValue(-THUMB_SIZE);
   const selectedStop = useSharedValue(-1);
+  const interacting = useSharedValue(false);
   const reducedMotionValue = useSharedValue(reducedMotion ? 1 : 0);
   const currentMode = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -46,10 +47,11 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
   }, []);
 
   useEffect(() => {
+    if (interacting.value) return;
     selectedStop.value = stopIndex;
     const next = stopIndex < 0 ? -THUMB_SIZE : knobX(trackWidth.value, stopIndex);
     knobPosition.value = reducedMotion ? next : withTiming(next, { duration: 170 });
-  }, [knobPosition, reducedMotion, selectedStop, stopIndex, trackWidth]);
+  }, [interacting, knobPosition, reducedMotion, selectedStop, stopIndex, trackWidth]);
 
   const onTrackLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = event.nativeEvent.layout.width;
@@ -63,7 +65,9 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
     .onBegin(event => {
       const w = trackWidth.value;
       if (w > 0) {
-        const index = Math.round(Math.max(0, Math.min(w, event.x)) / w * (STOP_COUNT - 1));
+        interacting.value = true;
+        const x = Math.max(THUMB_SIZE / 2, Math.min(w - THUMB_SIZE / 2, event.x));
+        const index = Math.round((x - THUMB_SIZE / 2) / Math.max(1, w - THUMB_SIZE) * (STOP_COUNT - 1));
         selectedStop.value = index;
         runOnJS(select)(index);
       }
@@ -71,19 +75,38 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
     .onUpdate(event => {
       const w = trackWidth.value;
       if (w <= 0) return;
-      const x = Math.max(0, Math.min(w, event.x));
-      const index = Math.round(x / w * (STOP_COUNT - 1));
-      knobPosition.value = reducedMotionValue.value ? knobX(w, index) : withTiming(knobX(w, index), { duration: 90 });
+      const x = Math.max(THUMB_SIZE / 2, Math.min(w - THUMB_SIZE / 2, event.x));
+      knobPosition.value = x;
+      const index = Math.round((x - THUMB_SIZE / 2) / Math.max(1, w - THUMB_SIZE) * (STOP_COUNT - 1));
       if (selectedStop.value !== index) {
         selectedStop.value = index;
         runOnJS(select)(index);
       }
-    }), [knobPosition, reducedMotionValue, select, selectedStop, trackWidth]);
+    })
+    .onEnd(() => {
+      const w = trackWidth.value;
+      const index = selectedStop.value;
+      if (w > 0 && index >= 0) {
+        const target = knobX(w, index);
+        knobPosition.value = reducedMotionValue.value ? target : withTiming(target, { duration: 150 });
+      }
+      interacting.value = false;
+    })
+    .onFinalize((_event, success) => {
+      if (success || !interacting.value) return;
+      const w = trackWidth.value;
+      const index = selectedStop.value;
+      if (w > 0 && index >= 0) {
+        const target = knobX(w, index);
+        knobPosition.value = reducedMotionValue.value ? target : withTiming(target, { duration: 150 });
+      }
+      interacting.value = false;
+    }), [interacting, knobPosition, reducedMotionValue, select, selectedStop, trackWidth]);
 
   const knobStyle = useAnimatedStyle(() => ({ transform: [{ translateX: knobPosition.value - THUMB_SIZE / 2 }] }));
   const activeTrackStyle = useAnimatedStyle(() => ({ width: Math.max(0, knobPosition.value) }));
   const labelsByStop = [labels.instant, labels.medium, labels.high];
-  const activeLabel = stopIndex < 0 ? labels.defaultModel : labelsByStop[stopIndex];
+  const activeLabel = stopIndex < 0 ? labels.chooseEffort : `${labelsByStop[stopIndex]} ${labels.effort}`;
   const accessibilityActions = [
     { name: 'decrement', label: labels.instant },
     { name: 'increment', label: labels.high },
@@ -95,7 +118,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
 
   return <View style={{ width: '100%', alignItems: 'center' }}>
     <Text accessibilityLiveRegion="polite" style={{ alignSelf: 'center', color: colors.text, fontFamily: 'Inter_300Light', fontSize: 25, lineHeight: 32, marginBottom: 12 }}>
-      {stopIndex >= 0 ? <><Text style={{ color: colors.accent }}>{labelsByStop[stopIndex]}</Text><Text style={{ color: colors.text }}>{` ${labels.effort}`}</Text></> : <Text style={{ color: colors.text }}>{labels.defaultModel}</Text>}
+      {stopIndex >= 0 ? <><Text style={{ color: colors.accent }}>{labelsByStop[stopIndex]}</Text><Text style={{ color: colors.text }}>{` ${labels.effort}`}</Text></> : <Text style={{ color: colors.muted }}>{labels.chooseEffort}</Text>}
     </Text>
     <View style={{ width: '84%', height: CAPSULE_HEIGHT, borderRadius: CAPSULE_HEIGHT / 2, backgroundColor: colors.selected, borderWidth: 1, borderColor: '#34343B', justifyContent: 'center', paddingHorizontal: 13 }}>
       <View onLayout={onTrackLayout} style={{ height: TRACK_HEIGHT, justifyContent: 'center' }}>
