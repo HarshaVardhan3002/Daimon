@@ -8,14 +8,15 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolation, FadeIn, FadeOut, SlideInDown, SlideOutDown, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { copy, themes } from '../src/design/theme';
 import type { Locale, ThemeMode } from '../src/design/theme';
 import { ChatClientError, sendChatCompletion } from '../src/chat/modelClient';
-import { reasoningEffortForMode, type ReasoningMode } from '../src/chat/reasoningEffort';
+import { reasoningEffortForMode } from '../src/chat/reasoningEffort';
 import { ReadableMessage } from '../src/chat/ReadableMessage';
 import { QuizCard } from '../src/chat/QuizCard';
+import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
 import { GeneratedImage } from '../src/chat/GeneratedImage';
 import { persistRichReply } from '../src/chat/richReply';
 import { validateQuizCardData } from '../src/chat/quizCardData';
@@ -28,14 +29,14 @@ import { beginChatSend, completePendingTurn, failPendingTurn, forgetRetryableReq
 import { updateTurnList } from '../src/state/turns';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
-const ATTACHMENT_MENU_HEIGHT = 280;
+const ATTACHMENT_MENU_HEIGHT = 214;
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
   if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
   if (error === 'cancelled') return locale === 'de' ? 'Antwort angehalten. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Response stopped. Your message stays in the chat and can be retried.';
   if (error === 'interrupted') return locale === 'de' ? 'Die Antwort wurde unterbrochen. Du kannst es erneut versuchen.' : 'The response was interrupted. You can try again.';
-  if (error === 'reasoning_unavailable') return locale === 'de' ? 'Das Modell hat diese Denkstufe abgelehnt. Wähle „Standard“ und tippe auf Erneut, um es mit dem Standardmodell zu versuchen.' : 'The model did not accept this reasoning level. Choose Default, then tap Retry to try the standard model.';
-  if (error === 'reasoning_image_unsupported') return locale === 'de' ? 'Bildanfragen benötigen Standard. Wähle „Standard“; dein Entwurf und Bild bleiben erhalten.' : 'Image requests need Default. Choose Default; your draft and image are still here.';
+  if (error === 'reasoning_unavailable') return locale === 'de' ? 'Das Modell hat diese Denkstufe abgelehnt. Tippe auf das × im Denkstufen-Chip und danach auf Erneut, um es mit dem Standardmodell zu versuchen.' : 'The model did not accept this reasoning level. Tap × in the thinking chip, then Retry to try the default model.';
+  if (error === 'reasoning_image_unsupported') return locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Tippe auf das × im Denkstufen-Chip; dein Entwurf und Bild bleiben erhalten.' : 'Image requests need the default model. Tap × in the thinking chip; your draft and image are still here.';
   if (error === 'document_too_large') return locale === 'de' ? 'Die Datei ist größer als 8 MiB. Wähle eine kleinere Datei aus.' : 'This file is larger than 8 MiB. Choose a smaller file.';
   if (error === 'document_too_many_pages') return locale === 'de' ? 'Das PDF hat mehr als 60 Seiten. Teile es in kleinere Dateien auf.' : 'This PDF has more than 60 pages. Split it into smaller files.';
   if (error === 'document_password') return locale === 'de' ? 'Dieses PDF ist passwortgeschützt. Entferne den Passwortschutz und füge die Datei erneut hinzu.' : 'This PDF is password-protected. Remove the password and attach it again.';
@@ -209,7 +210,7 @@ export default function HomeScreen() {
     const draftSnapshot = draft; const prompt = draftSnapshot.trim() || (documentAttachment ? locale === 'de' ? 'Fasse diese Datei zusammen.' : 'Summarize this file.' : locale === 'de' ? 'Was ist auf diesem Bild zu sehen?' : 'What is in this image?');
     if ((!draftSnapshot.trim() && !imageAttachment && !documentAttachment) || abortRef.current || requestRef.current?.status === 'loading') return;
     const selectedEffort = reasoningEffortForMode(reasoningMode);
-    if (imageAttachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen bitte zuerst „Standard“ auswählen. Entwurf und Bild bleiben erhalten.' : 'Choose Default before sending an image. Your draft and image are still here.'); return; }
+    if (imageAttachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen bitte zuerst auf das × im Denkstufen-Chip tippen. Entwurf und Bild bleiben erhalten.' : 'Tap × in the thinking chip before sending an image. Your draft and image are still here.'); return; }
     const requestDocument = documentRequestForPrompt(documentAttachment, Boolean(imageAttachment), activeSession.activeDocumentContext);
     const pendingTurnId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}), pendingTurnId, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
@@ -227,7 +228,7 @@ export default function HomeScreen() {
       : activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
     if (!pending) return;
     const selectedEffort = reasoningEffortForMode(reasoningMode);
-    if (pending.attachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen bitte zuerst „Standard“ auswählen. Entwurf und Bild bleiben erhalten.' : 'Choose Default before retrying an image. Your draft and image are still here.'); return; }
+    if (pending.attachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen bitte zuerst auf das × im Denkstufen-Chip tippen. Entwurf und Bild bleiben erhalten.' : 'Tap × in the thinking chip before retrying an image. Your draft and image are still here.'); return; }
     const configuredRequest = { ...pending, ...(selectedEffort ? { reasoningEffort: selectedEffort } : { reasoningEffort: undefined }) };
     if (pending.pendingTurnId) setConversation(previous => updatePendingTurn(previous, pending.pendingTurnId!, 'streaming'));
     void runChatRequest(configuredRequest);
@@ -288,12 +289,6 @@ export default function HomeScreen() {
 
   const hasCurrentContent = Boolean(conversation.length || draft.trim() || imageAttachment || documentAttachment || activeSession.activeDocumentContext || activeSession.pendingChatRequest || activeSession.pendingLiveRequest || activeSession.sampleSourceSelected);
   const reasoningModeLabel = reasoningMode === 'instant' ? (locale === 'de' ? 'Sofort' : 'Instant') : reasoningMode === 'medium' ? (locale === 'de' ? 'Mittel' : 'Medium') : reasoningMode === 'high' ? (locale === 'de' ? 'Hoch' : 'High') : (locale === 'de' ? 'Standard' : 'Default');
-  const reasoningOptions: { mode: ReasoningMode; label: string }[] = [
-    { mode: 'default', label: locale === 'de' ? 'Standard' : 'Default' },
-    { mode: 'instant', label: locale === 'de' ? 'Sofort' : 'Instant' },
-    { mode: 'medium', label: locale === 'de' ? 'Mittel' : 'Medium' },
-    { mode: 'high', label: locale === 'de' ? 'Hoch' : 'High' },
-  ];
   const retryAllowed = Boolean(requestRef.current && !requestError?.startsWith('document_'));
   const requestErrorMessage = requestError ? errorText(locale, requestError) : '';
   const showGlobalRequestError = shouldShowGlobalChatError(requestRef.current, requestStatus === 'error' && Boolean(requestError));
@@ -437,7 +432,7 @@ export default function HomeScreen() {
             </View> : null}
             {legacyRequestPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 40, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: c.raised }}><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
             <View style={{ backgroundColor: c.surface, borderColor: c.line, borderWidth: 1, borderRadius: 28, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 5 }}>
-              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 5, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15 }}>{locale === 'de' ? 'Bildanfragen benötigen Standard. Wähle Standard, um das Bild zu senden.' : 'Image requests need Default. Choose Default to send this image.'}</Text> : null}
+              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 5, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15 }}>{locale === 'de' ? 'Bildanfragen benötigen Standard. Tippe auf das × im Denkstufen-Chip, um das Bild zu senden.' : 'Image requests need Default. Tap × in the thinking chip to send this image.'}</Text> : null}
               {imageAttachment ? <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingTop: 3, paddingBottom: 7 }}>
                 <Image source={{ uri: imageAttachment.uri }} accessibilityLabel={locale === 'de' ? 'Bild im Entwurf' : 'Image in draft'} resizeMode="cover" style={{ width: 58, height: 58, borderRadius: 11 }} />
                 <Text numberOfLines={1} style={{ flex: 1, marginLeft: 10, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12 }}>{imageAttachment.name}</Text>
@@ -451,7 +446,10 @@ export default function HomeScreen() {
               <View style={{ minHeight: 44, maxHeight: 136, flexDirection: 'row', alignItems: draft.includes('\n') ? 'flex-end' : 'center', gap: 4 }}>
                 <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
                 <TextInput ref={inputRef} value={draft} onChangeText={setDraft} placeholder={t.composer} placeholderTextColor={c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={t.composer} selectionColor={c.accent} style={{ flex: 1, color: c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
-                {reasoningMode !== 'default' ? <Pressable onPress={() => setReasoningDialOpen(true)} accessibilityRole="button" accessibilityLabel={`${locale === 'de' ? 'Denkstufe' : 'Think harder'}: ${reasoningModeLabel}`} accessibilityState={{ selected: true }} style={{ minWidth: 52, minHeight: 34, borderRadius: 17, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: c.selected }}><Feather name="cpu" size={13} color={c.accent} /><Text numberOfLines={1} style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 10 }}>{reasoningModeLabel}</Text></Pressable> : null}
+                <View style={{ minWidth: reasoningMode === 'default' ? 40 : undefined, height: 40, borderRadius: 20, paddingLeft: reasoningMode === 'default' ? 0 : 8, paddingRight: reasoningMode === 'default' ? 0 : 3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: reasoningMode === 'default' ? 'transparent' : c.selected }}>
+                  <Pressable onPress={() => setReasoningDialOpen(true)} onLongPress={() => setReasoningMode('default')} accessibilityRole="button" accessibilityLabel={`${locale === 'de' ? 'Denkstufe' : 'Thinking dial'}: ${reasoningModeLabel}`} accessibilityHint={reasoningMode !== 'default' ? (locale === 'de' ? 'Gedrückt halten, um die Denkstufe zurückzusetzen.' : 'Long press to clear the thinking mode.') : undefined} accessibilityActions={reasoningMode !== 'default' ? [{ name: 'default', label: locale === 'de' ? 'Denkmodus zurücksetzen' : 'Clear thinking mode' }] : undefined} onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'default') setReasoningMode('default'); }} accessibilityState={{ selected: reasoningMode !== 'default' }} style={{ minWidth: reasoningMode === 'default' ? 40 : undefined, height: 40, paddingHorizontal: reasoningMode === 'default' ? 0 : 3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}><Feather name="cpu" size={15} color={reasoningMode === 'default' ? c.muted : c.accent} />{reasoningMode !== 'default' ? <Text numberOfLines={1} style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 10 }}>{reasoningModeLabel}</Text> : null}</Pressable>
+                  {reasoningMode !== 'default' ? <Pressable onPress={() => setReasoningMode('default')} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkmodus zurücksetzen' : 'Clear thinking mode'} accessibilityState={{ selected: false }} style={{ width: 36, height: 40, alignItems: 'center', justifyContent: 'center' }}><Feather name="x" size={14} color={c.muted} /></Pressable> : null}
+                </View>
                 {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
               </View>
             </View>
@@ -476,9 +474,7 @@ export default function HomeScreen() {
                     { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
                     { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
                     { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-                    { key: 'think_harder' as const, label: locale === 'de' ? 'Denkstufe' : 'Think harder', icon: 'cpu' as const },
                   ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => {
-                    if (item.key === 'think_harder') { setReasoningDialOpen(true); closeAttachmentMenu(); return; }
                     void chooseAttachment(item.key);
                   }} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
                     <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
@@ -488,21 +484,13 @@ export default function HomeScreen() {
               </View>
             </Animated.View>
           </View> : null}
-          {reasoningDialOpen && !attachmentMenuVisible ? <View pointerEvents="box-none" style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
-            <Pressable onPress={() => setReasoningDialOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000055' }} />
-            <View accessibilityViewIsModal style={{ position: 'absolute', left: 22, right: 22, bottom: Math.max(insets.bottom, keyboardVisible ? 45 : 8) + (keyboardVisible ? 0 : 3) + (imageAttachment || documentAttachment ? 128 : 62) + 10, backgroundColor: c.raised, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 12, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }}>
-              <View style={{ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Feather name="cpu" size={17} color={c.accent} />
-                <Text style={{ flex: 1, color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 15 }}>{locale === 'de' ? 'Denkstufe' : 'Think harder'}</Text>
-                <Pressable onPress={() => setReasoningDialOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Schließen' : 'Close'} style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}><Feather name="x" size={17} color={c.muted} /></Pressable>
-              </View>
-              <Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16, marginTop: 2, marginBottom: 9 }}>{locale === 'de' ? 'Wählt die Denkstufe des Textmodells. Höhere Stufen können länger dauern.' : 'Sets the text model’s reasoning effort. Higher levels can take longer.'}</Text>
-              <View style={{ flexDirection: 'row', gap: 5 }}>
-                {reasoningOptions.map(option => <Pressable key={option.mode} onPress={() => { setReasoningMode(option.mode); setReasoningDialOpen(false); }} accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected: reasoningMode === option.mode }} style={{ minWidth: 0, minHeight: 42, flex: 1, borderRadius: 14, paddingHorizontal: 5, backgroundColor: reasoningMode === option.mode ? c.selected : 'transparent', borderWidth: 1, borderColor: reasoningMode === option.mode ? c.accent : c.line, alignItems: 'center', justifyContent: 'center' }}><Text numberOfLines={1} style={{ color: reasoningMode === option.mode ? c.text : c.muted, fontFamily: 'Inter_500Medium', fontSize: 11 }}>{option.label}</Text></Pressable>)}
-              </View>
-              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8 }}>{locale === 'de' ? 'Bildanfragen benötigen Standard. Das Bild bleibt im Entwurf, bis du Standard auswählst.' : 'Image requests need Default. The image stays in your draft until you choose Default.'}</Text> : null}
-            </View>
-          </View> : null}
+          {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
+            <Pressable onPress={() => setReasoningDialOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000A8' }} />
+            <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} accessibilityViewIsModal style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? 14 : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
+              <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={{ instant: locale === 'de' ? 'Sofort' : 'Instant', medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: locale === 'de' ? 'Aufwand' : 'effort', defaultModel: locale === 'de' ? 'Standardmodell' : 'Default model' }} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
+              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ width: '84%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8, textAlign: 'center' }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Schließe den Regler und tippe auf das × im Denkstufen-Chip; dein Bild bleibt im Entwurf.' : 'Image requests need the default model. Close this dial and tap × in the thinking chip; your image stays in the draft.'}</Text> : null}
+            </Animated.View>
+          </Animated.View> : null}
         </View>
       </KeyboardAvoidingView>
     </View>
