@@ -6,9 +6,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Speech from 'expo-speech';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, BackHandler, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { copy, themes } from '../src/design/theme';
 import type { Locale, ThemeMode } from '../src/design/theme';
@@ -44,7 +44,7 @@ const errorText = (locale: Locale, error: ChatRequestError) => {
 export default function HomeScreen() {
   const { theme, locale, draft, imageAttachment, documentAttachment, conversation, savedConversations, activeChatId, activeSession, hydrated, hydrationStatus, retryHydration, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, setTheme, setLocale, startNewChat, openSavedConversation, updateTurnById } = useAppSettings();
   const t = copy[locale]; const c = themes[theme]; const insets = useSafeAreaInsets(); const { width } = useWindowDimensions();
-  const [drawerOpen, setDrawerOpen] = useState(false); const [profileOpen, setProfileOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false); const [chatActionsOpen, setChatActionsOpen] = useState(false); const [moreTurnId, setMoreTurnId] = useState<string | null>(null); const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null); const [query, setQuery] = useState(''); const [notice, setNotice] = useState(''); const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false); const [profileOpen, setProfileOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false); const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false); const [attachmentMenuInteractive, setAttachmentMenuInteractive] = useState(false); const [chatActionsOpen, setChatActionsOpen] = useState(false); const [moreTurnId, setMoreTurnId] = useState<string | null>(null); const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null); const [query, setQuery] = useState(''); const [notice, setNotice] = useState(''); const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [requestError, setRequestError] = useState<ChatRequestError | null>(null);
   const requestRef = useRef<PendingChatRequest | null>(null);
@@ -54,7 +54,42 @@ export default function HomeScreen() {
   const [reducedMotion, setReducedMotion] = useState(false); const [busyCopy, setBusyCopy] = useState(false);
   const scrollRef = useRef<ScrollView>(null); const inputRef = useRef<TextInput>(null); const followsBottom = useRef(true);
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
+  const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
+  const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
+
+  const closeAttachmentMenu = useCallback(() => {
+    setAttachmentSheetOpen(false);
+    setAttachmentMenuInteractive(false);
+    if (!attachmentMenuVisible) return;
+    attachmentMenuProgress.value = withTiming(0, { duration: reducedMotion ? 1 : 190, easing: Easing.in(Easing.cubic) }, finished => {
+      if (finished) runOnJS(setAttachmentMenuVisible)(false);
+    });
+  }, [attachmentMenuVisible, attachmentMenuProgress, reducedMotion]);
+  const openAttachmentMenu = useCallback(() => {
+    const begin = (left: number, top: number, rootHeight: number) => {
+      if (rootHeight < 214) return;
+      attachmentOriginLeft.value = left;
+      attachmentOriginTop.value = top;
+      attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - 214, top + 44 - 214));
+      setAttachmentMenuInteractive(false);
+      setAttachmentMenuVisible(true);
+      setAttachmentSheetOpen(true);
+      attachmentMenuProgress.value = withTiming(1, { duration: reducedMotion ? 1 : 270, easing: Easing.out(Easing.cubic) }, finished => {
+        if (finished) runOnJS(setAttachmentMenuInteractive)(true);
+      });
+    };
+    const plus = attachmentPlusRef.current;
+    const bounds = attachmentBoundsRef.current;
+    if (!plus || !bounds) return;
+    plus.measureInWindow((plusX, plusY, plusWidth, plusHeight) => {
+      if (plusWidth < 44 || plusHeight < 44) return;
+      bounds.measureInWindow((rootX, rootY, _rootWidth, rootHeight) => {
+        if (rootHeight <= 0) return;
+        begin(plusX - rootX + (plusWidth - 44) / 2, plusY - rootY + (plusHeight - 44) / 2, rootHeight);
+      });
+    });
+  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentTargetTop, reducedMotion]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -63,20 +98,51 @@ export default function HomeScreen() {
     requestRef.current = pending; setRequestError(pending.error ?? 'interrupted'); setRequestStatus('error');
   }, [hydrated, activeChatId]);
   useEffect(() => { AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion).catch(() => undefined); const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion); return () => sub.remove(); }, []);
-  useEffect(() => { const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true)); const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false)); return () => { show.remove(); hide.remove(); }; }, []);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      if (!attachmentSheetOpen) return;
+      const plus = attachmentPlusRef.current;
+      const bounds = attachmentBoundsRef.current;
+      if (!plus || !bounds) { closeAttachmentMenu(); return; }
+      plus.measureInWindow((plusX, plusY, plusWidth, plusHeight) => {
+        bounds.measureInWindow((rootX, rootY, _rootWidth, rootHeight) => {
+          if (plusWidth >= 44 && plusHeight >= 44 && rootHeight >= 214) {
+            const top = plusY - rootY + (plusHeight - 44) / 2;
+            attachmentOriginLeft.value = plusX - rootX + (plusWidth - 44) / 2;
+            attachmentOriginTop.value = top;
+            attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - 214, top + 44 - 214));
+          }
+          closeAttachmentMenu();
+        });
+      });
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active' && !attachmentSheetOpen) {
+        attachmentMenuProgress.value = 0;
+        setAttachmentMenuVisible(false);
+        setAttachmentMenuInteractive(false);
+      }
+    });
+    return () => sub.remove();
+  }, [attachmentMenuProgress, attachmentSheetOpen]);
   useEffect(() => () => { abortRef.current?.abort(); speechRunRef.current += 1; void Speech.stop(); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
   useEffect(() => { speechRunRef.current += 1; setSpeakingTurnId(null); setMoreTurnId(null); setChatActionsOpen(false); void Speech.stop(); }, [activeChatId]);
   useEffect(() => { drawerProgress.value = withTiming(drawerOpen ? 1 : 0, { duration: reducedMotion ? 1 : drawerOpen ? 240 : 190, easing: Easing.out(Easing.cubic) }); }, [drawerOpen, reducedMotion, drawerProgress]);
   useFocusEffect(useCallback(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (attachmentSheetOpen) { setAttachmentSheetOpen(false); return true; }
+      if (attachmentSheetOpen || attachmentMenuVisible) { closeAttachmentMenu(); return true; }
       if (drawerOpen) { setDrawerOpen(false); Keyboard.dismiss(); return true; }
       if (profileOpen) { setProfileOpen(false); return true; }
       if (keyboardVisible) { Keyboard.dismiss(); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [attachmentSheetOpen, drawerOpen, profileOpen, keyboardVisible]));
+  }, [attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
 
   const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
   const runChatRequest = useCallback(async (request: PendingChatRequest) => {
@@ -219,6 +285,23 @@ export default function HomeScreen() {
   const rootStyle = useMemo(() => ({ flex: 1, backgroundColor: c.canvas }), [c.canvas]);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: drawerProgress.value * 0.38 }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(drawerProgress.value, [0, 1], [-drawerWidth, 0]) }] }));
+  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 }));
+  const attachmentCardStyle = useAnimatedStyle(() => ({
+    left: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginLeft.value, 22]),
+    top: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginTop.value, attachmentTargetTop.value]),
+    width: interpolate(attachmentMenuProgress.value, [0, 1], [44, 255]),
+    height: interpolate(attachmentMenuProgress.value, [0, 1], [44, 214]),
+    borderRadius: 22,
+    backgroundColor: c.surface,
+    shadowOpacity: attachmentMenuProgress.value * 0.28,
+  }));
+  const attachmentPlusStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
+  }));
+  const attachmentContentStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(attachmentMenuProgress.value, [0, 1], [10, 0]) }],
+  }));
   const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen), [drawerOpen, gestureStartX, openDrawer]);
   const drawerGesture = useMemo(() => Gesture.Pan().activeOffsetX(-12).failOffsetY([-10, 10]).onEnd(event => { if (event.translationX < -48) runOnJS(closeDrawer)(); }).enabled(drawerOpen), [closeDrawer, drawerOpen]);
 
@@ -230,7 +313,7 @@ export default function HomeScreen() {
   };
 
   const chooseAttachment = useCallback(async (kind: 'camera' | 'photos' | 'files') => {
-    setAttachmentSheetOpen(false);
+    closeAttachmentMenu();
     try {
       let uri = ''; let name = ''; let mimeType: string | null | undefined; let width = 0; let height = 0; let sizeBytes: number | null | undefined;
       if (kind === 'camera') {
@@ -266,7 +349,7 @@ export default function HomeScreen() {
         ? (locale === 'de' ? 'Datei konnte nicht hinzugefügt werden. Erlaubt sind PDF, TXT und Markdown bis 8 MiB.' : 'Could not attach that file. PDF, TXT, and Markdown up to 8 MiB are supported.')
         : (locale === 'de' ? 'Bild konnte nicht hinzugefügt werden' : 'Could not attach that image'));
     }
-  }, [locale, setActiveSession, setDocumentAttachment, setImageAttachment, showNotice]);
+  }, [closeAttachmentMenu, locale, setActiveSession, setDocumentAttachment, setImageAttachment, showNotice]);
   const removeImageAttachment = useCallback(() => setImageAttachment(undefined), [setImageAttachment]);
   const removeDocumentAttachment = useCallback(() => setDocumentAttachment(undefined), [setDocumentAttachment]);
   const forgetDocumentContext = useCallback(() => setActiveSession(current => ({ ...current, activeDocumentContext: undefined })), [setActiveSession]);
@@ -316,7 +399,7 @@ export default function HomeScreen() {
   return <GestureDetector gesture={edgeGesture}><SafeAreaView style={rootStyle} edges={['top', 'left', 'right']}>
     <View style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <View style={{ flex: 1 }}>
+        <View ref={attachmentBoundsRef} style={{ flex: 1 }}>
           <View style={{ height: 56, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={openDrawer} accessibilityRole="button" accessibilityLabel={t.menu} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="menu" size={20} color={c.text} /></Pressable>
             <View style={{ flex: 1 }} />
@@ -346,7 +429,7 @@ export default function HomeScreen() {
                 <Pressable onPress={removeDocumentAttachment} disabled={requestStatus === 'loading'} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Datei entfernen' : 'Remove file'} style={{ width: 44, height: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="x" size={18} color={c.muted} /></Pressable>
               </View> : null}
               <View style={{ minHeight: 44, maxHeight: 136, flexDirection: 'row', alignItems: draft.includes('\n') ? 'flex-end' : 'center', gap: 4 }}>
-                <Pressable disabled={requestStatus === 'loading'} onPress={() => setAttachmentSheetOpen(true)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.muted} /></Pressable>
+                <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
                 <TextInput ref={inputRef} value={draft} onChangeText={setDraft} placeholder={t.composer} placeholderTextColor={c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={t.composer} selectionColor={c.accent} style={{ flex: 1, color: c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
                 {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
               </View>
@@ -361,18 +444,24 @@ export default function HomeScreen() {
               <Pressable onPress={() => { setChatActionsOpen(false); openSettings(); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="settings" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.profile}</Text></Pressable>
             </View>
           </View> : null}
-          {attachmentSheetOpen ? <View pointerEvents="box-none" style={{ position: 'absolute', zIndex: 100, elevation: 24, left: 0, right: 0, top: 0, bottom: 0 }}>
-            <Pressable accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhangmenü schließen' : 'Dismiss attachment menu'} onPress={() => setAttachmentSheetOpen(false)} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000055' }} />
-            <View accessibilityViewIsModal style={{ position: 'absolute', left: 22, bottom: Math.max(insets.bottom, keyboardVisible ? 45 : 8) + (keyboardVisible ? 0 : 3) + (imageAttachment || documentAttachment ? 128 : 62) + 10, width: 255, backgroundColor: c.raised, borderRadius: 22, paddingHorizontal: 12, paddingVertical: 8, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }}>
-              {([
-                { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
-                { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
-                { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-              ]).map(item => <Pressable key={item.key} onPress={() => void chooseAttachment(item.key)} accessibilityRole="button" style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.surface : 'transparent' })}>
-                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
-                <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
-              </Pressable>)}
-            </View>
+          {attachmentMenuVisible ? <View pointerEvents="auto" accessibilityElementsHidden={!attachmentSheetOpen} importantForAccessibility={attachmentSheetOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentSheetOpen} style={{ position: 'absolute', zIndex: 100, elevation: 24, left: 0, right: 0, top: 0, bottom: 0 }}>
+            <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, attachmentBackdropStyle]} />
+            <Pressable accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhangmenü schließen' : 'Dismiss attachment menu'} onPress={closeAttachmentMenu} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
+            <Animated.View style={[{ position: 'absolute', borderRadius: 22, shadowColor: '#000', shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }, attachmentCardStyle]}>
+              <View accessibilityViewIsModal={attachmentMenuInteractive} accessibilityElementsHidden={!attachmentMenuInteractive} importantForAccessibility={attachmentMenuInteractive ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentMenuInteractive} style={{ flex: 1, backgroundColor: 'transparent', borderRadius: 22, overflow: 'hidden', paddingHorizontal: 12, paddingVertical: 8 }}>
+                <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }, attachmentPlusStyle]}><Feather name="plus" size={23} color={c.muted} /></Animated.View>
+                <Animated.View pointerEvents={attachmentMenuInteractive ? 'auto' : 'none'} style={[{ flex: 1 }, attachmentContentStyle]}>
+                  {([
+                    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
+                    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
+                    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
+                  ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => void chooseAttachment(item.key)} accessibilityRole="button" style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
+                    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
+                    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
+                  </Pressable>)}
+                </Animated.View>
+              </View>
+            </Animated.View>
           </View> : null}
         </View>
       </KeyboardAvoidingView>
