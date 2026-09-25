@@ -154,6 +154,46 @@ test('normalizes a valid quiz tool call into the rich quiz contract', () => {
   assert.equal(question.explanation, 'Mars orbits the Sun.');
 });
 
+test('normalizes the observed text-wrapped quiz call and preserves preceding prose', () => {
+  const argumentsValue = { questions: [{ question: 'Which is a planet?', options: ['Mars', 'Moon', 'Sun', 'Comet'], correctIndex: 0 }] };
+  const result = normalizeCompletion({
+    model: 'test-model',
+    choices: [{ finish_reason: 'stop', message: { content: `Here is your quiz.\n<tool_call> ${JSON.stringify({ name: 'render_quiz', arguments: argumentsValue })} </tool_call>` } }],
+  });
+
+  assert.equal(result.message.content, 'Here is your quiz.');
+  assert.equal(result.message.rich.type, 'quiz');
+  assert.equal(result.message.rich.questions.length, 1);
+  assert.equal(result.message.rich.questions[0].prompt, 'Which is a planet?');
+  assert.equal(result.message.rich.questions[0].choices.find(choice => choice.text === 'Mars').id, result.message.rich.questions[0].correctAnswer);
+});
+
+test('rejects malformed, unknown, and invalid standalone pseudo tool calls', () => {
+  const completions = [
+    '<tool_call> {"name":"render_quiz","arguments": } </tool_call>',
+    `<tool_call> ${JSON.stringify({ name: 'delete_files', arguments: {} })} </tool_call>`,
+    `<tool_call> ${JSON.stringify({ name: 'render_quiz', arguments: { questions: [] } })} </tool_call>`,
+    '<tool_call> {"name":"render_quiz","arguments":{}}',
+  ];
+
+  for (const content of completions) {
+    assert.throws(() => normalizeCompletion({ choices: [{ message: { content } }] }), /pseudo tool|tool-call markup|between 1 and 5/);
+  }
+});
+
+test('leaves quoted and fenced tool-call examples as ordinary assistant text', () => {
+  const content = [
+    'The literal string "<tool_call> example </tool_call>" is documentation.',
+    '```xml',
+    '<tool_call> {"name":"render_quiz","arguments":{"questions":[]}} </tool_call>',
+    '```',
+  ].join('\n');
+  const result = normalizeCompletion({ choices: [{ message: { content } }] });
+
+  assert.equal(result.message.content, content);
+  assert.equal(result.message.rich, undefined);
+});
+
 test('rejects malformed, oversized, and multiple tool calls', () => {
   assert.throws(() => validateQuizArguments({ questions: [] }), /between 1 and 5/);
   assert.throws(() => validateQuizArguments({ questions: [{ question: 'Q', options: ['a', 'b', 'c'], correctIndex: 0 }] }), /exactly four/);
