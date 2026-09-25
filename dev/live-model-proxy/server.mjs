@@ -351,6 +351,44 @@ function parseToolArguments(toolCall) {
   throw new Error('The model returned an unsupported tool call.');
 }
 
+function parsePseudoQuizToolCall(content) {
+  const lines = content.split(/\r?\n/);
+  const candidates = [];
+  let fence;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fenceMarker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fenceMarker) {
+      if (!fence) fence = { character: fenceMarker[0], length: fenceMarker.length };
+      else if (fenceMarker[0] === fence.character && fenceMarker.length >= fence.length) fence = undefined;
+      continue;
+    }
+    if (fence) continue;
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('<tool_call') || trimmed.startsWith('</tool_call')) candidates.push(index);
+  }
+  if (candidates.length === 0) return undefined;
+  if (candidates.length !== 1) throw new Error('The model returned malformed tool-call markup.');
+
+  const index = candidates[0];
+  const wrapper = /^\s*<tool_call>([\s\S]*?)<\/tool_call>\s*$/.exec(lines[index]);
+  if (!wrapper || lines.slice(index + 1).some(line => line.trim())) throw new Error('The model returned malformed tool-call markup.');
+  const payload = wrapper[1].trim();
+  if (!payload || payload.length > MAX_TOOL_ARGUMENT_CHARS + 64) throw new Error('The model returned invalid pseudo tool arguments.');
+
+  let call;
+  try { call = JSON.parse(payload); } catch { throw new Error('The model returned malformed pseudo tool arguments.'); }
+  if (!call || typeof call !== 'object' || Array.isArray(call) || Object.keys(call).length !== 2 || !Object.hasOwn(call, 'name') || !Object.hasOwn(call, 'arguments')) {
+    throw new Error('The model returned invalid pseudo tool arguments.');
+  }
+  if (call.name !== 'render_quiz') throw new Error('The model returned an unsupported pseudo tool call.');
+
+  return {
+    content: lines.slice(0, index).join('\n').trim() || 'Here’s your quiz.',
+    rich: validateQuizArguments(call.arguments),
+  };
+}
+
 export function normalizeCompletion(completion, fallbackModel = MODEL) {
   const choice = completion?.choices?.[0];
   const modelMessage = choice?.message;
@@ -368,6 +406,10 @@ export function normalizeCompletion(completion, fallbackModel = MODEL) {
         message = { role: 'assistant', content: content.trim(), rich: { type: 'image_request', prompt: tool.prompt, alt: tool.alt } };
       }
     }
+  }
+  if (!message) {
+    const pseudoQuiz = parsePseudoQuizToolCall(content);
+    if (pseudoQuiz) message = { role: 'assistant', content: pseudoQuiz.content, rich: pseudoQuiz.rich };
   }
   if (!message) {
     if (typeof modelMessage?.content !== 'string' || !content.trim()) throw new Error('The chat model returned no assistant text.');
