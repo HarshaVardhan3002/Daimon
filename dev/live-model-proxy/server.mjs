@@ -8,6 +8,7 @@ const PORT = Number(process.env.LIVE_MODEL_PROXY_PORT || 18765);
 const UPSTREAM = 'https://chat-ai.academiccloud.de/v1/chat/completions';
 const IMAGE_UPSTREAM = 'https://chat-ai.academiccloud.de/v1/images/generations';
 const MODEL = process.env.LIVE_MODEL_ID || 'qwen3-30b-a3b-instruct-2507';
+const REASONING_MODEL = process.env.REASONING_MODEL_ID || 'openai-gpt-oss-120b';
 const VISION_MODEL = process.env.VISION_MODEL_ID || 'gemma-4-31b-it';
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_MESSAGES = 24;
@@ -130,6 +131,31 @@ export function validateMessages(input) {
   });
   if (!hasUserMessage) throw Object.assign(new Error('Conversation must include at least one user message.'), { status: 400 });
   return messages;
+}
+
+export function validateReasoningEffort(value) {
+  if (value === undefined) return undefined;
+  if (value !== 'low' && value !== 'medium' && value !== 'high') {
+    throw Object.assign(new Error('reasoningEffort must be low, medium, or high.'), { status: 400, code: 'INVALID_REASONING_EFFORT' });
+  }
+  return value;
+}
+
+export function buildUpstreamChatPayload({ messages, extractedDocument, hasImage, reasoningEffort }) {
+  if (reasoningEffort && hasImage) {
+    throw Object.assign(new Error('Image requests use the standard vision model. Choose Default before sending an image.'), { status: 422, code: 'REASONING_IMAGE_UNSUPPORTED' });
+  }
+  const model = hasImage ? VISION_MODEL : reasoningEffort ? REASONING_MODEL : MODEL;
+  return {
+    model,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...prepareUpstreamMessages(messages, extractedDocument),
+    ],
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort, max_tokens: 2400 } : { temperature: 0.4, max_tokens: 1200 }),
+    ...(!hasImage ? { tools: TOOLS, tool_choice: 'auto' } : {}),
+    stream: false,
+  };
 }
 
 export function decodeDocumentBase64(value, maxBytes = MAX_DOCUMENT_BYTES) {
@@ -531,9 +557,14 @@ const server = http.createServer(async (req, res) => {
     const input = await readJson(req);
     const messages = validateMessages(input);
     const hasImage = messages.some(message => Boolean(message.image));
+    const reasoningEffort = validateReasoningEffort(input.reasoningEffort);
+    if (reasoningEffort && hasImage) {
+      return fail(res, 422, 'REASONING_IMAGE_UNSUPPORTED', 'Image requests use the standard vision model. Choose Default before sending an image.');
+    }
     const attachedDocument = messages.at(-1)?.document;
     const extractedDocument = attachedDocument ? await extractDocumentText(attachedDocument) : undefined;
-    const requestModel = hasImage ? VISION_MODEL : MODEL;
+    const upstreamPayload = buildUpstreamChatPayload({ messages, extractedDocument, hasImage, reasoningEffort });
+    const requestModel = upstreamPayload.model;
     const controller = new AbortController();
     abortTimer = setTimeout(() => controller.abort(), 45_000);
     const upstream = await fetchChatWithRetry(UPSTREAM, {
@@ -544,24 +575,14 @@ const server = http.createServer(async (req, res) => {
         accept: 'application/json',
       },
       signal: controller.signal,
-      body: JSON.stringify({
-        model: requestModel,
-        messages: [
-          {
-            role: 'system',
-            content: SYSTEM_PROMPT,
-          },
-          ...prepareUpstreamMessages(messages, extractedDocument),
-        ],
-        temperature: 0.4,
-        max_tokens: 1200,
-        ...(!hasImage ? { tools: TOOLS, tool_choice: 'auto' } : {}),
-        stream: false,
-      }),
+      body: JSON.stringify(upstreamPayload),
     });
     const completion = upstream.ok ? await readLimitedJson(upstream, MAX_CHAT_RESPONSE_BYTES) : null;
     clearTimeout(abortTimer);
     if (!upstream.ok) {
+      if (reasoningEffort && [400, 404, 422].includes(upstream.status)) {
+        return fail(res, 502, 'REASONING_UNAVAILABLE', 'The selected reasoning model or effort is unavailable. Choose Default and retry.');
+      }
       const retryable = upstream.status === 408 || upstream.status === 429 || upstream.status >= 500;
       return fail(
         res,
@@ -610,6 +631,10 @@ export function startServer() {
   }
   if (!/^[\w.-]{1,80}$/.test(MODEL)) {
     console.error('LIVE_MODEL_ID must be a valid model ID.');
+    process.exit(1);
+  }
+  if (!/^[\w.-]{1,80}$/.test(REASONING_MODEL)) {
+    console.error('REASONING_MODEL_ID must be a valid model ID.');
     process.exit(1);
   }
   if (!/^[\w.-]{1,80}$/.test(VISION_MODEL)) {
