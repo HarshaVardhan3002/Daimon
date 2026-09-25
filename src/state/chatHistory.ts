@@ -18,9 +18,8 @@ function legacyActivityText(turn: Turn): string {
 /** Build bounded context from saved ordinary turns, retaining the new prompt. */
 export function buildChatContext(turns: readonly Turn[], prompt: string): ChatMessage[] {
   const messages: ChatMessage[] = [];
-  for (const turn of turns.slice(-12)) {
-    // Earlier bundled activities remain stored but are not sent as conversation context.
-    if (turn.liveActivity || turn.liveProgress || turn.id.startsWith('sample-') || !turn.prompt.trim()) continue;
+  const answeredTurns = turns.filter(turn => turn.status === 'complete' && !turn.liveActivity && !turn.liveProgress && !turn.id.startsWith('sample-') && turn.prompt.trim()).slice(-12);
+  for (const turn of answeredTurns) {
     messages.push({ role: 'user', content: turn.prompt.slice(0, 6000) });
     const answer = turn.answer.trim();
     const imageContext = turn.rich?.type === 'generated_image' ? `The previous assistant reply included a generated image described as: ${turn.rich.alt}` : '';

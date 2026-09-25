@@ -45,7 +45,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node --test ./dev/live-model-proxy/server.test.mjs ./tests/coldStart.test.mjs ./tests/modelClient.test.mjs",
+    "test": "node --test ./dev/live-model-proxy/server.test.mjs ./tests/coldStart.test.mjs ./tests/modelClient.test.mjs ./tests/chatRequestFlow.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "private": true
