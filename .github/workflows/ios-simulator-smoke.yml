@@ -1,0 +1,110 @@
+name: iOS Simulator smoke test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-simulator:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Generate the iOS project
+        run: npx expo prebuild --platform ios
+
+      - name: Locate the generated Xcode project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_PATH="$(find ios -maxdepth 1 -name '*.xcodeproj' -print -quit)"
+          WORKSPACE_PATH="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          if [[ -z "$PROJECT_PATH" || -z "$WORKSPACE_PATH" ]]; then
+            echo "Generated Xcode project or CocoaPods workspace not found" >&2
+            exit 1
+          fi
+          SCHEME="$(basename "$PROJECT_PATH" .xcodeproj)"
+          echo "workspace_path=$WORKSPACE_PATH" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+
+      - name: Select an iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          DEVICE_ID="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')"
+          if [[ -z "$DEVICE_ID" || "$DEVICE_ID" == "null" ]]; then
+            echo "No available iPhone simulator found" >&2
+            exit 1
+          fi
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          mkdir -p artifacts
+          RUNTIME_ID="$(xcrun simctl list devices available --json | jq -r --arg id "$DEVICE_ID" '.devices | to_entries[] | select(any(.value[]; .udid == $id)) | .key')"
+          xcrun simctl list devices available --json | jq --arg id "$DEVICE_ID" --arg runtime "$RUNTIME_ID" '{runtimeIdentifier: $runtime, device: [.devices[][] | select(.udid == $id)][0]}' > artifacts/simulator.json
+          xcrun simctl list runtimes --json | jq --arg runtime "$RUNTIME_ID" '.runtimes[] | select(.identifier == $runtime)' > artifacts/simulator-runtime.json
+          xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+
+      - name: Build Daimon for the iOS Simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace "${{ steps.project.outputs.workspace_path }}" \
+            -scheme "${{ steps.project.outputs.scheme }}" \
+            -configuration Release \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.device_id }}" \
+            -derivedDataPath "$RUNNER_TEMP/DaimonDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee artifacts/xcodebuild.log
+
+      - name: Install, launch, and capture the app
+        shell: bash
+        run: |
+          APP_PATH="$(find "$RUNNER_TEMP/DaimonDerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "Built .app not found" >&2
+            exit 1
+          fi
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          DEVICE_ID="${{ steps.simulator.outputs.device_id }}"
+          xcrun simctl install "$DEVICE_ID" "$APP_PATH"
+          xcrun simctl io "$DEVICE_ID" recordVideo --codec=h264 artifacts/daimon-launch.mp4 > artifacts/recording.log 2>&1 &
+          VIDEO_PID=$!
+          xcrun xctrace record --template "Animation Hitches" --device "$DEVICE_ID" --time-limit 12s --output artifacts/daimon-animation-hitches.trace > artifacts/xctrace.log 2>&1 &
+          TRACE_PID=$!
+          xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID" | tee artifacts/launch.log
+          sleep 15
+          xcrun simctl io "$DEVICE_ID" screenshot artifacts/daimon-ios-simulator.png
+          kill -INT "$VIDEO_PID" 2>/dev/null || true
+          wait "$VIDEO_PID" || true
+          wait "$TRACE_PID" || true
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")"
+          xcrun simctl spawn "$DEVICE_ID" log show --style compact --last 3m --predicate "process == \"$EXECUTABLE\"" > artifacts/app.log
+          test -s artifacts/daimon-ios-simulator.png
+
+      - name: Upload simulator screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daimon-ios-simulator-smoke
+          path: artifacts/
+          if-no-files-found: warn
