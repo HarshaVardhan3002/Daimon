@@ -38,7 +38,8 @@ type Props = {
 };
 
 // Geometry measured from the ChatGPT reference capture on a 360×792 dp OnePlus viewport (dp).
-const SHEET_RADIUS = 38;
+// Fitted to the reference frame's corner arc (100 px at 3 px/dp); the reference rounds the bottom corners the same way.
+const SHEET_RADIUS = 33;
 const MENU_RADIUS = 22;
 const SHUTTER_SIZE = 72;
 const SHUTTER_FILL = 60;
@@ -329,10 +330,7 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
       top,
       width: interpolate(p, [0, 1], [fromWidth.value, to.width]),
       height: Math.max(0, bottom - top),
-      borderTopLeftRadius: interpolate(p, [0, 1], [fromRadius.value, SHEET_RADIUS]),
-      borderTopRightRadius: interpolate(p, [0, 1], [fromRadius.value, SHEET_RADIUS]),
-      borderBottomLeftRadius: interpolate(p, [0, 1], [fromRadius.value, 0]),
-      borderBottomRightRadius: interpolate(p, [0, 1], [fromRadius.value, 0]),
+      borderRadius: interpolate(p, [0, 1], [fromRadius.value, SHEET_RADIUS]),
     };
   });
   // The preview keeps the viewfinder's size and is scaled to cover whatever card shape the sheet has, so it shrinks
