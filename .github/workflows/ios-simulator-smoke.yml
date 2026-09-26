@@ -57,6 +57,9 @@ jobs:
           fi
           echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
           mkdir -p artifacts
+          RUNTIME_ID="$(xcrun simctl list devices available --json | jq -r --arg id "$DEVICE_ID" '.devices | to_entries[] | select(any(.value[]; .udid == $id)) | .key')"
+          xcrun simctl list devices available --json | jq --arg id "$DEVICE_ID" --arg runtime "$RUNTIME_ID" '{runtimeIdentifier: $runtime, device: [.devices[][] | select(.udid == $id)][0]}' > artifacts/simulator.json
+          xcrun simctl list runtimes --json | jq --arg runtime "$RUNTIME_ID" '.runtimes[] | select(.identifier == $runtime)' > artifacts/simulator-runtime.json
           xcrun simctl boot "$DEVICE_ID" || true
           xcrun simctl bootstatus "$DEVICE_ID" -b
 
@@ -84,9 +87,16 @@ jobs:
           BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Info.plist")"
           DEVICE_ID="${{ steps.simulator.outputs.device_id }}"
           xcrun simctl install "$DEVICE_ID" "$APP_PATH"
+          xcrun simctl io "$DEVICE_ID" recordVideo --codec=h264 artifacts/daimon-launch.mp4 > artifacts/recording.log 2>&1 &
+          VIDEO_PID=$!
+          xcrun xctrace record --template "Animation Hitches" --device "$DEVICE_ID" --time-limit 12s --output artifacts/daimon-animation-hitches.trace > artifacts/xctrace.log 2>&1 &
+          TRACE_PID=$!
           xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID" | tee artifacts/launch.log
           sleep 15
           xcrun simctl io "$DEVICE_ID" screenshot artifacts/daimon-ios-simulator.png
+          kill -INT "$VIDEO_PID" 2>/dev/null || true
+          wait "$VIDEO_PID" || true
+          wait "$TRACE_PID" || true
           EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")"
           xcrun simctl spawn "$DEVICE_ID" log show --style compact --last 3m --predicate "process == \"$EXECUTABLE\"" > artifacts/app.log
           test -s artifacts/daimon-ios-simulator.png
