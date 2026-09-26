@@ -12,3 +12,6 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# In-app camera tap-to-focus (modules/camera-focus) reads expo-camera's bound CameraX camera by name.
+-keepclassmembers class expo.modules.camera.ExpoCameraView { *** camera; }

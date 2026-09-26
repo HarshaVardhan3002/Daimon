@@ -1,10 +1,11 @@
 import { Feather } from '@expo/vector-icons';
-import { Camera, CameraView, type CameraType, type FlashMode } from 'expo-camera';
+import { Camera, CameraView, type CameraType } from 'expo-camera';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useReducer, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Image, Linking, Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, AppState, Image, Linking, Platform, Pressable, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Animated, { Easing, interpolate, interpolateColor, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
+import { focusCameraAt } from '../../modules/camera-focus';
 import type { Locale } from '../design/theme';
 import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, type CameraFlowState, type CapturedPhoto } from './cameraFlow';
 
@@ -22,8 +23,11 @@ type Props = {
   bottomInset: number;
   /** Height kept free above the sheet so the chat header stays visible. */
   topReserve: number;
-  onRequestClose: () => void;
-  onExited: () => void;
+  /** Where a closing sheet shrinks back to (the reopened menu card); null slides it down into the composer. Read when `open` turns false. */
+  exitTo: CameraSheetRect | null;
+  /** 'menu' when the person backs out of the camera (it returns to the attachment menu), 'chat' after dismissing or keeping a photo. */
+  onRequestClose: (to: 'menu' | 'chat') => void;
+  onExited?: () => void;
   onAccept: (photo: CapturedPhoto) => Promise<void>;
 };
 
@@ -37,13 +41,18 @@ const SIDE_INSET = 30;
 const MIN_CONTROL_CENTER = 52;
 // CameraX's default capture ratio is 4:3, so a 3:4 viewfinder shows exactly the photo that will be taken.
 const VIEWFINDER_RATIO = 4 / 3;
-// Enough for MAX_IMAGE_DIMENSION after rotation without decoding a full sensor frame on the JS-facing path.
-const PICTURE_SIZE = '2048x1536';
+// Enough for MAX_IMAGE_DIMENSION after rotation without decoding a full sensor frame. Android sizes only; iOS uses presets.
+const PICTURE_SIZE = Platform.OS === 'android' ? '2048x1536' : undefined;
 const READY_TIMEOUT_MS = 6000;
-const ENTER = { duration: 380, easing: Easing.bezier(0.2, 0, 0, 1) };
-const EXIT = { duration: 240, easing: Easing.bezier(0.3, 0, 0.8, 0.15) };
+// Timed against the ChatGPT capture: the card reaches full size in ~120 ms and hands back in ~250 ms including the menu fade.
+const ENTER = { duration: 240, easing: Easing.bezier(0.2, 0, 0, 1) };
+const MORPH_EXIT = { duration: 260, easing: Easing.bezier(0.3, 0, 0, 1) };
+const SLIDE_EXIT = { duration: 240, easing: Easing.bezier(0.3, 0, 0.8, 0.15) };
 const HUD = { chip: 'rgba(18,18,18,0.5)', ring: 'rgba(18,18,18,0.42)', fillIdle: '#CFCFCF', menu: 'rgba(36,36,36,0.97)', text: '#FFFFFF', muted: '#B4B4B4' };
-const FLASH_ORDER: FlashMode[] = ['off', 'auto', 'on'];
+// 'on' is a steady light while framing and shooting, so the choice is visible at once; 'auto' fires only at capture when needed.
+type LightMode = 'off' | 'on' | 'auto';
+const LIGHT_ORDER: LightMode[] = ['off', 'on', 'auto'];
+const FOCUS_RING = 68;
 
 const deleteCapture = (uri: string) => { void LegacyFileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined); };
 
@@ -56,14 +65,15 @@ function CornerMask({ side, color }: { side: 'left' | 'right'; color: string }) 
   </View>;
 }
 
-export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraSheet({ open, origin, locale, palette, reducedMotion, bottomInset, topReserve, onRequestClose, onExited, onAccept }, ref) {
+export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraSheet({ open, origin, locale, palette, reducedMotion, bottomInset, topReserve, exitTo, onRequestClose, onExited, onAccept }, ref) {
   const de = locale === 'de';
   const [state, dispatch] = useReducer(cameraFlowReducer, initialCameraFlow);
   const stateRef = useRef<CameraFlowState>(state); stateRef.current = state;
   const openRef = useRef(open); openRef.current = open;
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const [facing, setFacing] = useState<CameraType>('back');
-  const [flash, setFlash] = useState<FlashMode>('off');
+  const [light, setLight] = useState<LightMode>('off');
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const capturesRef = useRef(new Set<string>());
@@ -77,7 +87,7 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
   const sheetTop = height - sheetHeight;
   const controlCenter = Math.max(MIN_CONTROL_CENTER, bottomInset + 30);
 
-  const progress = useSharedValue(0); const live = useSharedValue(0); const flashOverlay = useSharedValue(0);
+  const progress = useSharedValue(0); const live = useSharedValue(0); const flashOverlay = useSharedValue(0); const ringScale = useSharedValue(1); const ringOpacity = useSharedValue(0);
   const fromX = useSharedValue(0); const fromY = useSharedValue(0); const fromWidth = useSharedValue(0); const fromHeight = useSharedValue(0); const fromRadius = useSharedValue(SHEET_RADIUS); const morph = useSharedValue(0);
   const target = useSharedValue({ top: 0, width: 0, height: 0 });
   useEffect(() => { target.value = { top: sheetTop, width, height: sheetHeight }; }, [sheetTop, width, sheetHeight, target]);
@@ -96,7 +106,12 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
     }
   }, []);
 
-  useEffect(() => { dispatch({ type: open ? 'open' : 'close' }); if (!open) setMenuOpen(false); }, [open]);
+  useEffect(() => {
+    dispatch({ type: open ? 'open' : 'close' });
+    if (!open) setMenuOpen(false);
+    // Auto flash carries over between opens like a camera app; a steady light never switches itself back on.
+    else setLight(value => value === 'on' ? 'off' : value);
+  }, [open]);
 
   const markExpanded = useCallback((session: number) => dispatch({ type: 'expanded', session }), []);
   const hasSize = size !== null;
@@ -115,18 +130,20 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.session, hasSize]);
 
-  // Exit always slides straight down so the composer is revealed in place.
+  // Backing out shrinks the sheet into the reopened menu card; dismissing or keeping a photo slides it into the composer.
   useEffect(() => {
     if (open || !hasSize) return;
-    fromX.value = 0; fromY.value = height; fromWidth.value = width; fromHeight.value = sheetHeight; fromRadius.value = SHEET_RADIUS; morph.value = 0;
+    const end = exitTo ?? { x: 0, y: height, width, height: sheetHeight };
+    fromX.value = end.x; fromY.value = end.y; fromWidth.value = end.width; fromHeight.value = end.height;
+    fromRadius.value = exitTo ? MENU_RADIUS : SHEET_RADIUS; morph.value = exitTo ? 1 : 0;
     live.value = withTiming(0, { duration: reducedMotion ? 1 : 90 });
-    progress.value = withTiming(0, reducedMotion ? { duration: 1 } : EXIT, finished => { if (finished) runOnJS(onExited)(); });
+    progress.value = withTiming(0, reducedMotion ? { duration: 1 } : exitTo ? MORPH_EXIT : SLIDE_EXIT, finished => { if (finished && onExited) runOnJS(onExited)(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, hasSize]);
 
   // Warm the preview in only once frames are flowing; CameraX reports "open" slightly before the first frame lands.
   useEffect(() => {
-    if (state.ready) live.value = withDelay(reducedMotion ? 0 : 160, withTiming(1, { duration: reducedMotion ? 1 : 280, easing: Easing.out(Easing.quad) }));
+    if (state.ready) live.value = withDelay(reducedMotion ? 0 : 60, withTiming(1, { duration: reducedMotion ? 1 : 170, easing: Easing.out(Easing.quad) }));
     else live.value = 0;
   }, [state.ready, live, reducedMotion]);
 
@@ -166,7 +183,8 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
   useEffect(() => () => { for (const uri of capturesRef.current) deleteCapture(uri); capturesRef.current.clear(); }, []);
   useEffect(() => { if (open) lastPhotoRef.current = undefined; }, [open]);
 
-  const close = useCallback(() => { setMenuOpen(false); onRequestClose(); }, [onRequestClose]);
+  const close = useCallback((to: 'menu' | 'chat') => { setMenuOpen(false); onRequestClose(to); }, [onRequestClose]);
+  const backOut = useCallback(() => close('menu'), [close]);
   const retake = useCallback(() => dispatch({ type: 'retake' }), []);
 
   const capture = useCallback(async () => {
@@ -194,7 +212,7 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
     dispatch({ type: 'saveStart' });
     try {
       await onAccept(current.photo);
-      if (stateRef.current.session === current.session && openRef.current) onRequestClose();
+      if (stateRef.current.session === current.session && openRef.current) onRequestClose('chat');
     } catch {
       dispatch({ type: 'saveFailed', session: current.session });
     }
@@ -207,6 +225,21 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
     live.value = withTiming(0, { duration: 120 }, finished => { if (finished) runOnJS(apply)(); });
   }, [live, reducedMotion]);
 
+  const cycleLight = useCallback(() => setLight(value => LIGHT_ORDER[(LIGHT_ORDER.indexOf(value) + 1) % LIGHT_ORDER.length]), []);
+
+  const focusAt = useCallback((event: GestureResponderEvent) => {
+    if (!canCapture(stateRef.current) || sheetHeight <= 0 || width <= 0) return;
+    const { locationX, locationY } = event.nativeEvent;
+    setFocusPoint({ x: locationX, y: locationY });
+    ringOpacity.value = 1;
+    ringScale.value = reducedMotion ? 1 : 1.35;
+    if (!reducedMotion) ringScale.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) });
+    ringOpacity.value = withDelay(reducedMotion ? 600 : 900, withTiming(0, { duration: 220 }));
+    void Haptics.selectionAsync().catch(() => undefined);
+    void focusCameraAt(locationX / width, locationY / sheetHeight, facing);
+  }, [facing, reducedMotion, ringOpacity, ringScale, sheetHeight, width]);
+  useEffect(() => { ringOpacity.value = 0; setFocusPoint(null); }, [state.mountKey, ringOpacity]);
+
   useImperativeHandle(ref, () => ({
     handleBack: () => {
       if (!openRef.current) return false;
@@ -214,10 +247,10 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
       const current = stateRef.current;
       if (current.capturing || current.phase === 'saving') return true;
       if (current.phase === 'review') { retake(); return true; }
-      close();
+      backOut();
       return true;
     },
-  }), [close, menuOpen, retake]);
+  }), [backOut, menuOpen, retake]);
 
   const sheetStyle = useAnimatedStyle(() => {
     const p = progress.value; const to = target.value;
@@ -231,15 +264,18 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
       borderBottomLeftRadius: interpolate(p, [0, 1], [fromRadius.value, 0]),
       borderBottomRightRadius: interpolate(p, [0, 1], [fromRadius.value, 0]),
       // Grown from the menu card: start in its colour, translucent, so the menu reads as expanding into the camera.
-      backgroundColor: morph.value ? interpolateColor(p, [0, 0.62], [palette.surface, '#000000']) : '#000000',
-      opacity: morph.value ? interpolate(p, [0, 0.2], [0, 1], 'clamp') : 1,
+      // Morphing: the card keeps the menu colour while it grows, then darkens once it has nearly filled the sheet.
+      backgroundColor: morph.value ? interpolateColor(p, [0.45, 1], [palette.surface, '#000000']) : '#000000',
+      opacity: morph.value ? interpolate(p, [0, 0.12], [0, 1], 'clamp') : 1,
     };
   });
-  const controlsStyle = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0.45, 1], [0, 1], 'clamp') }));
+  // Controls ride inside the growing card from the start, as in the reference.
+  const controlsStyle = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0.1, 0.5], [0, 1], 'clamp') }));
   const coverStyle = useAnimatedStyle(() => ({ opacity: 1 - live.value }));
   const chipStyle = useAnimatedStyle(() => ({ opacity: live.value }));
   const shutterFillStyle = useAnimatedStyle(() => ({ backgroundColor: interpolateColor(live.value, [0, 1], [HUD.fillIdle, '#FFFFFF']) }));
   const flashStyle = useAnimatedStyle(() => ({ opacity: flashOverlay.value }));
+  const ringStyle = useAnimatedStyle(() => ({ opacity: ringOpacity.value, transform: [{ scale: ringScale.value }] }));
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width: w, height: h } = event.nativeEvent.layout;
@@ -249,7 +285,8 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
   const shownPhoto = state.photo ?? (!open ? lastPhotoRef.current : undefined);
   const reviewing = state.phase === 'review' || state.phase === 'saving';
   const showCameraControls = state.phase !== 'review' && state.phase !== 'saving';
-  const flashLabel = flash === 'on' ? (de ? 'An' : 'On') : flash === 'auto' ? 'Auto' : (de ? 'Aus' : 'Off');
+  const lightAvailable = facing === 'back';
+  const lightLabel = light === 'on' ? (de ? 'An' : 'On') : light === 'auto' ? 'Auto' : (de ? 'Aus' : 'Off');
   const noticeText = state.notice === 'capture' ? (de ? 'Foto konnte nicht aufgenommen werden. Versuche es erneut.' : 'Couldn’t take the photo. Try again.')
     : state.notice === 'save' ? (de ? 'Foto konnte nicht angehängt werden. Versuche es erneut.' : 'Couldn’t attach the photo. Try again.') : '';
   const sideButton = (icon: 'chevron-left' | 'more-vertical', label: string, onPress: () => void, extra?: { expanded?: boolean }) => <Pressable onPress={onPress} disabled={!open} accessibilityRole="button" accessibilityLabel={label} accessibilityState={extra?.expanded !== undefined ? { expanded: extra.expanded } : undefined} hitSlop={6} style={({ pressed }) => ({ width: SIDE_BUTTON, height: SIDE_BUTTON, alignItems: 'center', justifyContent: 'center', transform: [{ scale: pressed ? 0.94 : 1 }] })}>
@@ -263,17 +300,17 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
     </>}
   </Pressable>;
 
-  return <View pointerEvents={open ? 'box-none' : 'none'} onLayout={onLayout} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+  return <View pointerEvents={open ? 'box-none' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} onLayout={onLayout} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
     {size ? <>
-      <Pressable onPress={() => { if (canDismissFromOutside(stateRef.current)) close(); }} accessible={false} importantForAccessibility="no" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: sheetTop }} />
+      <Pressable onPress={() => { if (canDismissFromOutside(stateRef.current)) close('chat'); }} accessible={false} importantForAccessibility="no" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: sheetTop }} />
       <Animated.View accessibilityViewIsModal={open} style={[{ position: 'absolute', overflow: 'hidden' }, sheetStyle]}>
-        {mounted ? <CameraView key={state.mountKey} ref={cameraRef} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} facing={facing} flash={flash} mode="picture" pictureSize={PICTURE_SIZE} animateShutter={false} mirror={false}
+        {mounted ? <CameraView key={state.mountKey} ref={cameraRef} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} facing={facing} flash={lightAvailable && light === 'auto' ? 'auto' : 'off'} enableTorch={lightAvailable && light === 'on'} mode="picture" pictureSize={PICTURE_SIZE} animateShutter={false} mirror={false}
           onCameraReady={() => dispatch({ type: 'ready', session: state.session, mountKey: state.mountKey })}
           onMountError={() => dispatch({ type: 'mountError', session: state.session, mountKey: state.mountKey })} /> : null}
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, coverStyle]} />
         {shownPhoto ? <Image source={{ uri: shownPhoto.uri }} fadeDuration={0} resizeMode="cover" accessibilityLabel={de ? 'Aufgenommenes Foto' : 'Captured photo'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#FFFFFF' }, flashStyle]} />
-        {state.expanded || !open ? <><CornerMask side="left" color={palette.canvas} /><CornerMask side="right" color={palette.canvas} /></> : null}
+        {mounted ? <><CornerMask side="left" color={palette.canvas} /><CornerMask side="right" color={palette.canvas} /></> : null}
 
         {state.phase === 'denied' || state.phase === 'error' ? <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 32, right: 32, top: 0, bottom: controlCenter + SHUTTER_SIZE / 2, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name={state.phase === 'denied' ? 'camera-off' : 'alert-circle'} size={26} color={HUD.muted} />
@@ -291,9 +328,14 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
         {noticeText ? <View pointerEvents="none" accessibilityLiveRegion="polite" style={{ position: 'absolute', top: 18, left: 24, right: 24, alignItems: 'center' }}><View style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 16, backgroundColor: 'rgba(24,24,24,0.86)' }}><Text style={{ color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 13, textAlign: 'center' }}>{noticeText}</Text></View></View> : null}
 
         <Animated.View pointerEvents={open ? 'box-none' : 'none'} style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }, controlsStyle]}>
+          {state.phase === 'camera' && !menuOpen ? <Pressable onPress={focusAt} disabled={!canCapture(state)} accessible={false} importantForAccessibility="no" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
+          {focusPoint && state.phase === 'camera' ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: focusPoint.x - FOCUS_RING / 2, top: focusPoint.y - FOCUS_RING / 2, width: FOCUS_RING, height: FOCUS_RING, borderRadius: FOCUS_RING / 2, borderWidth: 1.5, borderColor: '#FFFFFF' }, ringStyle]} /> : null}
+          {state.phase === 'camera' && lightAvailable && light !== 'off' ? <Pressable onPress={cycleLight} accessibilityRole="button" accessibilityLabel={`${de ? 'Blitz' : 'Flash'}: ${lightLabel}`} hitSlop={8} style={{ position: 'absolute', top: 16, left: 16, height: 32, paddingHorizontal: 11, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: HUD.chip }}>
+            <Feather name="zap" size={14} color={light === 'on' ? '#FFD84D' : HUD.text} /><Text style={{ color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 13 }}>{lightLabel}</Text>
+          </Pressable> : null}
           {menuOpen ? <Pressable onPress={() => setMenuOpen(false)} accessible={false} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
           {showCameraControls ? <>
-            <View style={{ position: 'absolute', left: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 }}>{sideButton('chevron-left', de ? 'Kamera schließen' : 'Close camera', close)}</View>
+            <View style={{ position: 'absolute', left: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 }}>{sideButton('chevron-left', de ? 'Kamera schließen' : 'Close camera', backOut)}</View>
             {state.phase !== 'denied' && state.phase !== 'error' ? <Pressable onPress={() => void capture()} disabled={!canCapture(state)} accessibilityRole="button" accessibilityLabel={de ? 'Foto aufnehmen' : 'Take photo'} accessibilityState={{ disabled: !canCapture(state), busy: state.capturing }} style={{ position: 'absolute', left: (width - SHUTTER_SIZE) / 2, bottom: controlCenter - SHUTTER_SIZE / 2, width: SHUTTER_SIZE, height: SHUTTER_SIZE, alignItems: 'center', justifyContent: 'center' }}>
               {({ pressed }) => <>
                 <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0, width: SHUTTER_SIZE, height: SHUTTER_SIZE, borderRadius: SHUTTER_SIZE / 2, borderWidth: (SHUTTER_SIZE - SHUTTER_FILL) / 2, borderColor: HUD.ring }, chipStyle]} />
@@ -312,8 +354,8 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
             <Pressable onPress={switchCamera} accessibilityRole="button" style={({ pressed }) => ({ minHeight: 46, borderRadius: 12, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? 'rgba(255,255,255,0.08)' : 'transparent' })}>
               <Feather name="refresh-cw" size={17} color={HUD.text} /><Text style={{ color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{de ? 'Kamera wechseln' : 'Switch camera'}</Text>
             </Pressable>
-            {facing === 'back' ? <Pressable onPress={() => setFlash(value => FLASH_ORDER[(FLASH_ORDER.indexOf(value) + 1) % FLASH_ORDER.length])} accessibilityRole="button" accessibilityLabel={`${de ? 'Blitz' : 'Flash'}: ${flashLabel}`} style={({ pressed }) => ({ minHeight: 46, borderRadius: 12, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? 'rgba(255,255,255,0.08)' : 'transparent' })}>
-              <Feather name={flash === 'off' ? 'zap-off' : 'zap'} size={17} color={HUD.text} /><Text style={{ flex: 1, color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{de ? 'Blitz' : 'Flash'}</Text><Text style={{ color: HUD.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{flashLabel}</Text>
+            {lightAvailable ? <Pressable onPress={cycleLight} accessibilityRole="button" accessibilityLabel={`${de ? 'Blitz' : 'Flash'}: ${lightLabel}`} style={({ pressed }) => ({ minHeight: 46, borderRadius: 12, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? 'rgba(255,255,255,0.08)' : 'transparent' })}>
+              <Feather name={light === 'off' ? 'zap-off' : 'zap'} size={17} color={light === 'on' ? '#FFD84D' : HUD.text} /><Text style={{ flex: 1, color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{de ? 'Blitz' : 'Flash'}</Text><Text style={{ color: HUD.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{lightLabel}</Text>
             </Pressable> : null}
           </View> : null}
         </Animated.View>

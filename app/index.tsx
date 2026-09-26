@@ -71,8 +71,8 @@ export default function HomeScreen() {
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
   const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
-  const [cameraOpen, setCameraOpen] = useState(false); const [cameraLayerVisible, setCameraLayerVisible] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null);
-  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false);
+  const [cameraOpen, setCameraOpen] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null); const [cameraExitTo, setCameraExitTo] = useState<CameraSheetRect | null>(null);
+  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
   // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
   const attachmentCameraHandoff = useSharedValue(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
@@ -118,16 +118,34 @@ export default function HomeScreen() {
   }, [attachmentCameraHandoff, attachmentMenuProgress]);
   const openCamera = useCallback(() => {
     const fromMenu = attachmentMenuVisible;
-    Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
+    cameraRestoresKeyboardRef.current = keyboardVisible;
+    // Blur explicitly: a still-focused input would ignore the next tap and the keyboard would not come back after the camera.
+    inputRef.current?.blur(); Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
     setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
-    cameraOpenRef.current = true; setCameraLayerVisible(true); setCameraOpen(true);
+    cameraOpenRef.current = true; setCameraOpen(true);
     if (!fromMenu) return;
     // The sheet grows out of the menu card; fade the menu underneath instead of shrinking it back into the plus.
     setAttachmentSheetOpen(false); setAttachmentMenuInteractive(false);
-    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 380 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
-  }, [attachmentCameraHandoff, attachmentMenuVisible, attachmentTargetTop, finishCameraHandoff, reducedMotion]);
-  const closeCamera = useCallback(() => { cameraOpenRef.current = false; setCameraOpen(false); }, []);
-  const cameraExited = useCallback(() => { if (!cameraOpenRef.current) setCameraLayerVisible(false); }, []);
+    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 240 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
+  }, [attachmentCameraHandoff, attachmentMenuVisible, attachmentTargetTop, finishCameraHandoff, keyboardVisible, reducedMotion]);
+  const closeCamera = useCallback((to: 'menu' | 'chat') => {
+    cameraOpenRef.current = false;
+    const backToMenu = to === 'menu' && cameraOrigin !== null;
+    setCameraExitTo(backToMenu ? cameraOrigin : null);
+    setCameraOpen(false);
+    if (!backToMenu) return;
+    // Backing out returns to the attachment menu the camera grew from: the menu fades back in beneath the shrinking sheet.
+    attachmentMenuProgress.value = 1;
+    attachmentCameraHandoff.value = 1;
+    setAttachmentMenuVisible(true); setAttachmentSheetOpen(true); setAttachmentMenuInteractive(false);
+    // Same curve as the sheet's shrink, so the card and its items only reappear once the sheet has nearly reached them.
+    attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 260, easing: Easing.bezier(0.3, 0, 0, 1) }, finished => { if (finished) runOnJS(setAttachmentMenuInteractive)(true); });
+    if (cameraRestoresKeyboardRef.current) {
+      // Blur first so focus() is a real focus change on Android and raises the keyboard again.
+      inputRef.current?.blur();
+      setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
+    }
+  }, [attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -549,7 +567,8 @@ export default function HomeScreen() {
           </View> : null}
         </View>
       </KeyboardAvoidingView>
-      {cameraLayerVisible ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} locale={locale} palette={{ surface: c.surface, canvas: c.canvas }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onExited={cameraExited} onAccept={attachCapturedPhoto} /> : null}
+      {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
+      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} locale={locale} palette={{ surface: c.surface, canvas: c.canvas }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onAccept={attachCapturedPhoto} /> : null}
     </View>
 
     {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
