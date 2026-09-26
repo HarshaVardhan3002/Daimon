@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Speech from 'expo-speech';
 import { useFocusEffect } from 'expo-router';
+import { requireOptionalNativeModule } from 'expo';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, NativeModules, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -35,7 +36,10 @@ const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
 const ATTACHMENT_MENU_HEIGHT = 214;
 const ATTACHMENT_MENU_WIDTH = 255;
 const HEADER_HEIGHT = 56;
-const keyboardScrim = NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined;
+type KeyboardScrim = { show: (top: number, height: number, opacity: number) => void; hide: () => void };
+// Shades only the keyboard while the reasoning dial is open. Android: an app-attached window over the IME
+// (KeyboardScrimModule.kt). iOS: a window just above the keyboard's window (modules/keyboard-scrim).
+const keyboardScrim = (Platform.OS === 'ios' ? requireOptionalNativeModule<KeyboardScrim>('DaimonKeyboardScrim') : NativeModules.KeyboardScrim as KeyboardScrim | undefined) ?? undefined;
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
   if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
@@ -172,7 +176,7 @@ export default function HomeScreen() {
       setKeyboardVisible(true);
       const bounds = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
       keyboardBoundsRef.current = bounds;
-      if (Platform.OS === 'android' && reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
+      if (reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
       requestAnimationFrame(() => {
         dialOverlayBoundsRef.current?.measureInWindow((_x, y, _width, height) => {
           const rootBottom = y + height;
@@ -181,6 +185,8 @@ export default function HomeScreen() {
         });
       });
     });
+    // iOS only: lift the shade as the keyboard starts to slide away, not after it has gone.
+    const willHide = Keyboard.addListener('keyboardWillHide', () => keyboardScrim?.hide());
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       keyboardBoundsRef.current = null;
       keyboardScrim?.hide();
@@ -202,10 +208,10 @@ export default function HomeScreen() {
         });
       });
     });
-    return () => { show.remove(); hide.remove(); };
+    return () => { show.remove(); willHide.remove(); hide.remove(); };
   }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu, reasoningDialOpen]);
   useEffect(() => {
-    if (Platform.OS === 'android' && reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
+    if (reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
       const { top, height } = keyboardBoundsRef.current;
       keyboardScrim?.show(top, height, 0.22);
     } else keyboardScrim?.hide();

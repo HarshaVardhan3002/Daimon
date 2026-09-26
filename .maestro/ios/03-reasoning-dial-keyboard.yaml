@@ -1,4 +1,5 @@
-# Reasoning dial over the keyboard: type a draft, open the dial, close it, draft and keyboard intact.
+# Reasoning dial over the keyboard: type a draft, open the dial with the keyboard up, pick Medium (tap the
+# centre stop), Instant and High (drag to either end), close it, then keep typing into the same draft.
 appId: ${APP_ID}
 ---
 - launchApp:
@@ -11,9 +12,43 @@ appId: ${APP_ID}
 - waitForAnimationToEnd
 - takeScreenshot: ios-11-keyboard-draft
 - tapOn: "Thinking dial.*"
+- extendedWaitUntil:
+    visible:
+      id: "reasoning-effort-dial"
+    timeout: 5000
 - waitForAnimationToEnd
-- takeScreenshot: ios-12-dial-open
+# Keyboard must still be up (and shaded) under the open dial.
+- takeScreenshot: ios-12-dial-open-keyboard
+- tapOn:
+    id: "reasoning-effort-dial"
+- extendedWaitUntil:
+    visible: ".*Medium effort.*"
+    timeout: 3000
+- takeScreenshot: ios-13-dial-medium
+- swipe:
+    from:
+      id: "reasoning-effort-dial"
+    direction: LEFT
+    duration: 600
+- extendedWaitUntil:
+    visible: ".*Instant effort.*"
+    timeout: 3000
+- takeScreenshot: ios-14-dial-instant
+- swipe:
+    from:
+      id: "reasoning-effort-dial"
+    direction: RIGHT
+    duration: 600
+- extendedWaitUntil:
+    visible: ".*High effort.*"
+    timeout: 3000
+- takeScreenshot: ios-15-dial-high
 - tapOn: "Close reasoning effort"
 - waitForAnimationToEnd
+- assertVisible: "Thinking dial: High.*"
+# Draft survives and the keyboard still types into it.
 - assertVisible: "dial check"
-- takeScreenshot: ios-13-dial-closed
+- tapOn: "Message Daimon"
+- inputText: " more"
+- assertVisible: "dial check more"
+- takeScreenshot: ios-16-dial-closed-typing

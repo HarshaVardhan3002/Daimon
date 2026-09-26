@@ -225,6 +225,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
     <GestureDetector gesture={dialGesture}>
       <View
         accessible
+        testID="reasoning-effort-dial"
         accessibilityRole="adjustable"
         accessibilityLabel={stopIndex >= 0 ? `${labels.chooseEffort}, ${labelsByStop[stopIndex]} ${labels.effort}` : labels.chooseEffort}
         accessibilityValue={stopIndex >= 0 ? { min: 0, max: LAST_STOP, now: stopIndex, text: `${labelsByStop[stopIndex]} ${labels.effort}` } : undefined}
