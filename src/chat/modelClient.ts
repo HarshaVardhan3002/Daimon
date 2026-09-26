@@ -1,4 +1,5 @@
 import { validateQuizCardData, type QuizCardQuestion } from './quizCardData';
+import type { ReasoningEffort } from './reasoningEffort';
 
 export type ChatMessage = {
   role: 'user' | 'assistant';
@@ -190,16 +191,22 @@ function validateCompletion(value: unknown): ChatCompletion {
 /** Sends bounded conversation history to the local proxy for a complete, non-streaming answer. */
 export async function sendChatCompletion(
   messages: readonly ChatMessage[],
-  options: { baseUrl?: string; signal?: AbortSignal } = {},
+  options: { baseUrl?: string; signal?: AbortSignal; reasoningEffort?: ReasoningEffort } = {},
 ): Promise<ChatCompletion> {
   const safeMessages = validateMessages(messages);
+  if (options.reasoningEffort !== undefined && !['low', 'medium', 'high'].includes(options.reasoningEffort)) {
+    throw new ChatClientError('The selected reasoning effort is invalid.', 'INVALID_REASONING_EFFORT', 400);
+  }
+  if (options.reasoningEffort && safeMessages.some(message => message.image)) {
+    throw new ChatClientError('Image requests use the standard vision model. Choose Default before sending an image.', 'REASONING_IMAGE_UNSUPPORTED', 422);
+  }
   const baseUrl = (options.baseUrl || DEFAULT_PROXY_URL).replace(/\/+$/, '');
   let response: Response;
   try {
     response = await fetch(`${baseUrl}/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: safeMessages }),
+      body: JSON.stringify({ messages: safeMessages, ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}) }),
       signal: options.signal,
     });
   } catch (error) {

@@ -5,9 +5,20 @@ import ts from 'typescript';
 
 const modelClientUrl = new URL('../src/chat/modelClient.ts', import.meta.url);
 const quizDataUrl = new URL('../src/chat/quizCardData.ts', import.meta.url).href;
+const reasoningEffortUrl = new URL('../src/chat/reasoningEffort.ts', import.meta.url);
 const modelClientSource = (await readFile(modelClientUrl, 'utf8')).replace("from './quizCardData'", `from '${quizDataUrl}'`);
 const compiledModelClient = ts.transpileModule(modelClientSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const { ChatClientError, sendChatCompletion } = await import(`data:text/javascript;base64,${Buffer.from(compiledModelClient).toString('base64')}`);
+const reasoningSource = await readFile(reasoningEffortUrl, 'utf8');
+const compiledReasoning = ts.transpileModule(reasoningSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { reasoningEffortForMode } = await import(`data:text/javascript;base64,${Buffer.from(compiledReasoning).toString('base64')}`);
+
+test('maps the visible choices to supported GWDG reasoning values', () => {
+  assert.equal(reasoningEffortForMode('default'), undefined);
+  assert.equal(reasoningEffortForMode('instant'), 'low');
+  assert.equal(reasoningEffortForMode('medium'), 'medium');
+  assert.equal(reasoningEffortForMode('high'), 'high');
+});
 
 test('sends a document as request-only latest-message data and validates truncation metadata', async () => {
   const previousFetch = globalThis.fetch;
@@ -30,6 +41,24 @@ test('sends a document as request-only latest-message data and validates truncat
     assert.equal(result.documentInfo.pagesRead, 3);
     assert.equal(result.documentInfo.pagesTotal, 4);
     assert.equal(result.documentInfo.truncated, true);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test('sends the explicit reasoning effort to the proxy and rejects effort with an image before fetch', async () => {
+  const previousFetch = globalThis.fetch;
+  let payload;
+  globalThis.fetch = async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return new Response(JSON.stringify({ message: { role: 'assistant', content: 'Careful answer.' }, model: 'openai-gpt-oss-120b', usage: null, finishReason: 'stop' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await sendChatCompletion([{ role: 'user', content: 'Explain this.' }], { reasoningEffort: 'high' });
+    assert.deepEqual(payload, { messages: [{ role: 'user', content: 'Explain this.' }], reasoningEffort: 'high' });
+    await sendChatCompletion([{ role: 'user', content: 'Default request.' }]);
+    assert.equal(Object.hasOwn(payload, 'reasoningEffort'), false);
+    await assert.rejects(sendChatCompletion([{ role: 'user', content: 'Look at this.', image: 'data:image/jpeg;base64,/9j/AA==' }], { reasoningEffort: 'low' }), error => error.code === 'REASONING_IMAGE_UNSUPPORTED');
   } finally { globalThis.fetch = previousFetch; }
 });
 

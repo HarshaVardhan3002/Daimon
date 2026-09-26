@@ -1,12 +1,13 @@
 import type { LiveModelRequest } from '../liveModel/types';
 import { decodeImageAttachment, type ImageAttachment } from '../chat/imageAttachment';
 import { decodeDocumentAttachment, type DocumentAttachment } from '../chat/documentAttachment';
+import type { ReasoningEffort } from '../chat/reasoningEffort';
 
 export type LiveRequestError = 'disconnected' | 'temporarilyUnavailable' | 'failed' | 'tooLong' | 'interrupted';
 export type PendingLiveRequest = { request: LiveModelRequest; draftSnapshot: string; preserveDraftOnError: boolean; status: 'loading' | 'error'; error?: LiveRequestError };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
-export type ChatRequestError = 'disconnected' | 'failed' | 'cancelled' | 'interrupted' | 'document_too_large' | 'document_too_many_pages' | 'document_password' | 'document_no_text' | 'document_invalid' | 'document_encoding';
-export type PendingChatRequest = { messages: ChatMessage[]; prompt: string; locale: 'en' | 'de'; draftSnapshot: string; attachment?: ImageAttachment; documentAttachment?: DocumentAttachment; documentContextAttachment?: DocumentAttachment; replacementTurnId?: string; pendingTurnId?: string; status: 'loading' | 'error'; error?: ChatRequestError };
+export type ChatRequestError = 'disconnected' | 'failed' | 'cancelled' | 'interrupted' | 'reasoning_unavailable' | 'reasoning_image_unsupported' | 'document_too_large' | 'document_too_many_pages' | 'document_password' | 'document_no_text' | 'document_invalid' | 'document_encoding';
+export type PendingChatRequest = { messages: ChatMessage[]; prompt: string; locale: 'en' | 'de'; draftSnapshot: string; reasoningEffort?: ReasoningEffort; attachment?: ImageAttachment; documentAttachment?: DocumentAttachment; documentContextAttachment?: DocumentAttachment; replacementTurnId?: string; pendingTurnId?: string; status: 'loading' | 'error'; error?: ChatRequestError };
 export type ChatSession = { sampleSourceSelected?: boolean; activeDocumentContext?: DocumentAttachment; pendingLiveRequest?: PendingLiveRequest; pendingChatRequest?: PendingChatRequest; retryableChatRequests?: PendingChatRequest[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,14 +35,16 @@ function decodePendingChatRequest(value: unknown): PendingChatRequest {
   const pendingChat = value;
   if (!isRecord(pendingChat) || !Array.isArray(pendingChat.messages) || typeof pendingChat.prompt !== 'string'
     || (pendingChat.locale !== 'en' && pendingChat.locale !== 'de') || typeof pendingChat.draftSnapshot !== 'string'
+    || (pendingChat.reasoningEffort !== undefined && pendingChat.reasoningEffort !== 'low' && pendingChat.reasoningEffort !== 'medium' && pendingChat.reasoningEffort !== 'high')
     || (pendingChat.replacementTurnId !== undefined && typeof pendingChat.replacementTurnId !== 'string')
     || (pendingChat.pendingTurnId !== undefined && typeof pendingChat.pendingTurnId !== 'string')
     || (pendingChat.status !== 'loading' && pendingChat.status !== 'error')
     || pendingChat.messages.some(message => !isRecord(message) || (message.role !== 'user' && message.role !== 'assistant') || typeof message.content !== 'string' || message.image !== undefined || message.document !== undefined)) throw new Error('Stored chat request is invalid.');
-  const error = ['disconnected', 'failed', 'cancelled', 'interrupted', 'document_too_large', 'document_too_many_pages', 'document_password', 'document_no_text', 'document_invalid', 'document_encoding'].includes(String(pendingChat.error)) ? pendingChat.error as ChatRequestError : undefined;
+  const error = ['disconnected', 'failed', 'cancelled', 'interrupted', 'reasoning_unavailable', 'reasoning_image_unsupported', 'document_too_large', 'document_too_many_pages', 'document_password', 'document_no_text', 'document_invalid', 'document_encoding'].includes(String(pendingChat.error)) ? pendingChat.error as ChatRequestError : undefined;
   return {
     messages: pendingChat.messages as ChatMessage[], prompt: pendingChat.prompt, locale: pendingChat.locale,
     draftSnapshot: pendingChat.draftSnapshot, status: 'error',
+    ...(pendingChat.reasoningEffort ? { reasoningEffort: pendingChat.reasoningEffort as ReasoningEffort } : {}),
     ...(typeof pendingChat.replacementTurnId === 'string' ? { replacementTurnId: pendingChat.replacementTurnId } : {}),
     ...(typeof pendingChat.pendingTurnId === 'string' ? { pendingTurnId: pendingChat.pendingTurnId } : {}),
     ...(decodeImageAttachment(pendingChat.attachment) ? { attachment: decodeImageAttachment(pendingChat.attachment) } : {}),

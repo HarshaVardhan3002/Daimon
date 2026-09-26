@@ -3,6 +3,7 @@ import { getLocales } from 'expo-localization';
 import { NativeModules, Platform } from 'react-native';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Locale, ThemeMode } from '../design/theme';
+import { isReasoningMode, type ReasoningMode } from '../chat/reasoningEffort';
 import type { LiveModelActivity } from '../liveModel/types';
 import type { LiveActivityProgress } from '../learning/liveProgress';
 import { decodeChatSession, type ChatRequestError, type ChatSession } from './chatSession';
@@ -17,9 +18,9 @@ const KEY = 'assistant:first-slice:v1';
 export type Turn = { id: string; prompt: string; locale: Locale; status: 'streaming' | 'complete' | 'stopped' | 'failed'; answer: string; requestError?: ChatRequestError; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; documentInfo?: { pagesRead: number | null; pagesTotal: number | null; characters: number; truncated: boolean }; rich?: PersistedRichContent; liveActivity?: LiveModelActivity; liveProgress?: LiveActivityProgress };
 export type { ChatMessage, ChatRequestError, ChatSession, PendingChatRequest } from './chatSession';
 export type SavedConversation = { id: string; title: string; turns: Turn[]; draft?: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; session?: ChatSession };
-type Stored = { theme: ThemeMode; locale: Locale; draft: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; conversation: Turn[]; activeChatId: string; activeSession: ChatSession; savedConversations: SavedConversation[] };
+type Stored = { theme: ThemeMode; locale: Locale; reasoningMode: ReasoningMode; draft: string; imageAttachment?: ImageAttachment; documentAttachment?: DocumentAttachment; conversation: Turn[]; activeChatId: string; activeSession: ChatSession; savedConversations: SavedConversation[] };
 type HydrationStatus = 'loading' | 'ready' | 'read_error' | 'parse_error';
-type AppContextValue = Stored & { hydrated: boolean; hydrationStatus: HydrationStatus; retryHydration: () => void; setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>; setLocale: React.Dispatch<React.SetStateAction<Locale>>; setDraft: React.Dispatch<React.SetStateAction<string>>; setImageAttachment: React.Dispatch<React.SetStateAction<ImageAttachment | undefined>>; setDocumentAttachment: React.Dispatch<React.SetStateAction<DocumentAttachment | undefined>>; setConversation: React.Dispatch<React.SetStateAction<Turn[]>>; setActiveSession: React.Dispatch<React.SetStateAction<ChatSession>>; updateTurnById: (id: string, update: (turn: Turn) => Turn) => void; startNewChat: () => void; openSavedConversation: (id: string) => void };
+type AppContextValue = Stored & { hydrated: boolean; hydrationStatus: HydrationStatus; retryHydration: () => void; setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>; setLocale: React.Dispatch<React.SetStateAction<Locale>>; setReasoningMode: React.Dispatch<React.SetStateAction<ReasoningMode>>; setDraft: React.Dispatch<React.SetStateAction<string>>; setImageAttachment: React.Dispatch<React.SetStateAction<ImageAttachment | undefined>>; setDocumentAttachment: React.Dispatch<React.SetStateAction<DocumentAttachment | undefined>>; setConversation: React.Dispatch<React.SetStateAction<Turn[]>>; setActiveSession: React.Dispatch<React.SetStateAction<ChatSession>>; updateTurnById: (id: string, update: (turn: Turn) => Turn) => void; startNewChat: () => void; openSavedConversation: (id: string) => void };
 const defaultLocale: Locale = getLocales()[0]?.languageCode === 'de' ? 'de' : 'en';
 const Context = createContext<AppContextValue | null>(null);
 
@@ -60,6 +61,7 @@ function decodeStored(value: unknown): Stored {
   if (!isRecord(value)) throw new Error('Stored app state is invalid.');
   if (value.theme !== undefined && value.theme !== 'dark' && value.theme !== 'light') throw new Error('Stored theme is invalid.');
   if (value.locale !== undefined && value.locale !== 'en' && value.locale !== 'de') throw new Error('Stored locale is invalid.');
+  if (value.reasoningMode !== undefined && !isReasoningMode(value.reasoningMode)) throw new Error('Stored reasoning mode is invalid.');
   if (value.draft !== undefined && typeof value.draft !== 'string') throw new Error('Stored draft is invalid.');
   if (value.activeChatId !== undefined && typeof value.activeChatId !== 'string') throw new Error('Stored chat ID is invalid.');
   if (value.conversation !== undefined && !Array.isArray(value.conversation)) throw new Error('Stored conversation is invalid.');
@@ -68,6 +70,7 @@ function decodeStored(value: unknown): Stored {
   return {
     theme: (value.theme as ThemeMode | undefined) ?? 'dark',
     locale: (value.locale as Locale | undefined) ?? defaultLocale,
+    reasoningMode: (value.reasoningMode as ReasoningMode | undefined) ?? 'default',
     draft: (value.draft as string | undefined) ?? '',
     imageAttachment: decodeImageAttachment(value.imageAttachment),
     documentAttachment: decodeDocumentAttachment(value.documentAttachment),
@@ -84,6 +87,7 @@ function decodeStored(value: unknown): Stored {
 export function AppProvider({ children }: React.PropsWithChildren) {
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [locale, setLocale] = useState<Locale>(defaultLocale);
+  const [reasoningMode, setReasoningMode] = useState<ReasoningMode>('default');
   const [draft, setDraft] = useState('');
   const [imageAttachment, setImageAttachment] = useState<ImageAttachment | undefined>();
   const [documentAttachment, setDocumentAttachment] = useState<DocumentAttachment | undefined>();
@@ -115,7 +119,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
               ...result.value.savedConversations.map(chat => chat.id),
             ]))
           : result.value;
-        setTheme(restored.theme); setLocale(restored.locale); setDraft(restored.draft); setImageAttachment(restored.imageAttachment); setDocumentAttachment(restored.documentAttachment);
+        setTheme(restored.theme); setLocale(restored.locale); setReasoningMode(restored.reasoningMode ?? 'default'); setDraft(restored.draft); setImageAttachment(restored.imageAttachment); setDocumentAttachment(restored.documentAttachment);
         setConversation(restored.conversation); setActiveChatId(restored.activeChatId); setActiveSession(restored.activeSession); setSavedConversations(restored.savedConversations);
       } else {
         setActiveChatId(createFreshChatId([]));
@@ -124,7 +128,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     });
     return () => { active = false; };
   }, [loadAttempt]);
-  useEffect(() => { if (!hydrated) return; const value: Stored = { theme, locale, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations }; AsyncStorage.setItem(KEY, JSON.stringify(value)).catch(() => undefined); }, [theme, locale, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated]);
+  useEffect(() => { if (!hydrated) return; const value: Stored = { theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations }; AsyncStorage.setItem(KEY, JSON.stringify(value)).catch(() => undefined); }, [theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated]);
   const updateTurnById = useCallback((id: string, update: (turn: Turn) => Turn) => {
     setConversation(current => updateTurnList(current, id, update));
     setSavedConversations(current => current.map(chat => {
@@ -163,7 +167,7 @@ export function AppProvider({ children }: React.PropsWithChildren) {
     setActiveSession(restored.activeSession);
     setSavedConversations(restored.savedConversations);
   };
-  const value = useMemo(() => ({ theme, locale, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated, hydrationStatus, retryHydration, setTheme, setLocale, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, updateTurnById, startNewChat, openSavedConversation }), [theme, locale, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated, hydrationStatus, retryHydration, updateTurnById]);
+  const value = useMemo(() => ({ theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated, hydrationStatus, retryHydration, setTheme, setLocale, setReasoningMode, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, updateTurnById, startNewChat, openSavedConversation }), [theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, activeChatId, activeSession, savedConversations, hydrated, hydrationStatus, retryHydration, updateTurnById]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useAppSettings() { const value = useContext(Context); if (!value) throw new Error('AppProvider is missing'); return value; }

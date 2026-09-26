@@ -17,7 +17,7 @@ try {
 }
 ```
 
-The server prints only the selected model and loopback address. Stop it with Ctrl+C. The default port is 18765; set LIVE_MODEL_PROXY_PORT before launch to choose another port. The default model is qwen3-30b-a3b-instruct-2507. Set LIVE_MODEL_ID to another READY text model from /models when needed.
+The server prints only the selected model and loopback address. Stop it with Ctrl+C. The default port is 18765; set LIVE_MODEL_PROXY_PORT before launch to choose another port. The default model is qwen3-30b-a3b-instruct-2507. Set LIVE_MODEL_ID to another READY text model from /models when needed. The optional composer effort choices route text requests to `openai-gpt-oss-120b` with `reasoning_effort` set to `low`, `medium`, or `high`; set `REASONING_MODEL_ID` only if using another compatible model. Normal chat continues to use Qwen. An image request cannot use effort mode because this reasoning model does not accept images, so the app asks the user to switch to Default and keeps the draft and image. PDF and text files are extracted to text before reaching the selected text model. The effort setting requests a supported model parameter and does not guarantee a particular reasoning depth.
 
 For an Android device connected with USB, run this in another PowerShell window:
 
@@ -29,7 +29,7 @@ The app can call http://127.0.0.1:18765/chat. For web, the same loopback URL wor
 
 ## Chat contract
 
-POST /chat accepts JSON with at least one user message. Only user and assistant roles are accepted; the proxy adds its own general assistant system prompt. It allows up to 24 messages, 6,000 characters per message, and 12,000 characters total.
+POST /chat accepts JSON with at least one user message. Only user and assistant roles are accepted; the proxy adds its own general assistant system prompt. It allows up to 24 messages, 6,000 characters per message, and 12,000 characters total. An optional `reasoningEffort` value may be `low`, `medium`, or `high`; omit it to use the default Qwen route.
 
 ```json
 {

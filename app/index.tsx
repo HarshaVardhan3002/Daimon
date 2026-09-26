@@ -6,15 +6,18 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Speech from 'expo-speech';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, NativeModules, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolation, FadeIn, FadeOut, SlideInDown, SlideOutDown, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { copy, themes } from '../src/design/theme';
 import type { Locale, ThemeMode } from '../src/design/theme';
 import { ChatClientError, sendChatCompletion } from '../src/chat/modelClient';
+import { reasoningEffortForMode } from '../src/chat/reasoningEffort';
 import { ReadableMessage } from '../src/chat/ReadableMessage';
 import { QuizCard } from '../src/chat/QuizCard';
+import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
+import { ReasoningGauge } from '../src/chat/ReasoningGauge';
 import { GeneratedImage } from '../src/chat/GeneratedImage';
 import { persistRichReply } from '../src/chat/richReply';
 import { validateQuizCardData } from '../src/chat/quizCardData';
@@ -27,11 +30,15 @@ import { beginChatSend, completePendingTurn, failPendingTurn, forgetRetryableReq
 import { updateTurnList } from '../src/state/turns';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
+const ATTACHMENT_MENU_HEIGHT = 214;
+const keyboardScrim = NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined;
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
   if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
   if (error === 'cancelled') return locale === 'de' ? 'Antwort angehalten. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Response stopped. Your message stays in the chat and can be retried.';
   if (error === 'interrupted') return locale === 'de' ? 'Die Antwort wurde unterbrochen. Du kannst es erneut versuchen.' : 'The response was interrupted. You can try again.';
+  if (error === 'reasoning_unavailable') return locale === 'de' ? 'Das Modell hat diese Denkstufe abgelehnt. Wähle im Menü „Standardmodell verwenden“ und tippe dann auf Erneut.' : 'The model did not accept this effort level. Choose “Use default model” in the menu, then retry.';
+  if (error === 'reasoning_image_unsupported') return locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Wähle im Menü „Standardmodell verwenden“; dein Entwurf und Bild bleiben erhalten.' : 'Image requests need the default model. Choose “Use default model” in the menu; your draft and image are still here.';
   if (error === 'document_too_large') return locale === 'de' ? 'Die Datei ist größer als 8 MiB. Wähle eine kleinere Datei aus.' : 'This file is larger than 8 MiB. Choose a smaller file.';
   if (error === 'document_too_many_pages') return locale === 'de' ? 'Das PDF hat mehr als 60 Seiten. Teile es in kleinere Dateien auf.' : 'This PDF has more than 60 pages. Split it into smaller files.';
   if (error === 'document_password') return locale === 'de' ? 'Dieses PDF ist passwortgeschützt. Entferne den Passwortschutz und füge die Datei erneut hinzu.' : 'This PDF is password-protected. Remove the password and attach it again.';
@@ -42,9 +49,9 @@ const errorText = (locale: Locale, error: ChatRequestError) => {
 };
 
 export default function HomeScreen() {
-  const { theme, locale, draft, imageAttachment, documentAttachment, conversation, savedConversations, activeChatId, activeSession, hydrated, hydrationStatus, retryHydration, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, setTheme, setLocale, startNewChat, openSavedConversation, updateTurnById } = useAppSettings();
+  const { theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, savedConversations, activeChatId, activeSession, hydrated, hydrationStatus, retryHydration, setReasoningMode, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, setTheme, setLocale, startNewChat, openSavedConversation, updateTurnById } = useAppSettings();
   const t = copy[locale]; const c = themes[theme]; const insets = useSafeAreaInsets(); const { width } = useWindowDimensions();
-  const [drawerOpen, setDrawerOpen] = useState(false); const [profileOpen, setProfileOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false); const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false); const [attachmentMenuInteractive, setAttachmentMenuInteractive] = useState(false); const [chatActionsOpen, setChatActionsOpen] = useState(false); const [moreTurnId, setMoreTurnId] = useState<string | null>(null); const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null); const [query, setQuery] = useState(''); const [notice, setNotice] = useState(''); const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false); const [profileOpen, setProfileOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false); const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false); const [attachmentMenuInteractive, setAttachmentMenuInteractive] = useState(false); const [reasoningDialOpen, setReasoningDialOpen] = useState(false); const [chatActionsOpen, setChatActionsOpen] = useState(false); const [moreTurnId, setMoreTurnId] = useState<string | null>(null); const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null); const [query, setQuery] = useState(''); const [notice, setNotice] = useState(''); const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [requestError, setRequestError] = useState<ChatRequestError | null>(null);
   const requestRef = useRef<PendingChatRequest | null>(null);
@@ -53,8 +60,13 @@ export default function HomeScreen() {
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false); const [busyCopy, setBusyCopy] = useState(false);
   const scrollRef = useRef<ScrollView>(null); const inputRef = useRef<TextInput>(null); const followsBottom = useRef(true);
+  const keyboardBoundsRef = useRef<{ top: number; height: number } | null>(null);
+  const dialOverlayBoundsRef = useRef<View>(null);
+  const openReasoningDial = useCallback(() => setReasoningDialOpen(true), []);
+  const closeReasoningDial = useCallback(() => setReasoningDialOpen(false), []);
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
+  const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
 
@@ -68,10 +80,10 @@ export default function HomeScreen() {
   }, [attachmentMenuVisible, attachmentMenuProgress, reducedMotion]);
   const openAttachmentMenu = useCallback(() => {
     const begin = (left: number, top: number, rootHeight: number) => {
-      if (rootHeight < 214) return;
+      if (rootHeight < ATTACHMENT_MENU_HEIGHT) return;
       attachmentOriginLeft.value = left;
       attachmentOriginTop.value = top;
-      attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - 214, top + 44 - 214));
+      attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - ATTACHMENT_MENU_HEIGHT, top + 44 - ATTACHMENT_MENU_HEIGHT));
       setAttachmentMenuInteractive(false);
       setAttachmentMenuVisible(true);
       setAttachmentSheetOpen(true);
@@ -99,42 +111,73 @@ export default function HomeScreen() {
   }, [hydrated, activeChatId]);
   useEffect(() => { AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion).catch(() => undefined); const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion); return () => sub.remove(); }, []);
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const show = Keyboard.addListener('keyboardDidShow', event => {
+      setKeyboardVisible(true);
+      const bounds = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
+      keyboardBoundsRef.current = bounds;
+      if (Platform.OS === 'android' && reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
+      requestAnimationFrame(() => {
+        dialOverlayBoundsRef.current?.measureInWindow((_x, y, _width, height) => {
+          const rootBottom = y + height;
+          const imeTop = event.endCoordinates.screenY;
+    setDialKeyboardBottomOffset(Math.max(0, rootBottom - imeTop));
+        });
+      });
+    });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardBoundsRef.current = null;
+      keyboardScrim?.hide();
       setKeyboardVisible(false);
+      setDialKeyboardBottomOffset(0);
       if (!attachmentSheetOpen) return;
       const plus = attachmentPlusRef.current;
       const bounds = attachmentBoundsRef.current;
       if (!plus || !bounds) { closeAttachmentMenu(); return; }
       plus.measureInWindow((plusX, plusY, plusWidth, plusHeight) => {
         bounds.measureInWindow((rootX, rootY, _rootWidth, rootHeight) => {
-          if (plusWidth >= 44 && plusHeight >= 44 && rootHeight >= 214) {
+          if (plusWidth >= 44 && plusHeight >= 44 && rootHeight >= ATTACHMENT_MENU_HEIGHT) {
             const top = plusY - rootY + (plusHeight - 44) / 2;
             attachmentOriginLeft.value = plusX - rootX + (plusWidth - 44) / 2;
             attachmentOriginTop.value = top;
-            attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - 214, top + 44 - 214));
+            attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - ATTACHMENT_MENU_HEIGHT, top + 44 - ATTACHMENT_MENU_HEIGHT));
           }
           closeAttachmentMenu();
         });
       });
     });
     return () => { show.remove(); hide.remove(); };
-  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu]);
+  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu, reasoningDialOpen]);
+  useEffect(() => {
+    if (Platform.OS === 'android' && reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
+      const { top, height } = keyboardBoundsRef.current;
+      keyboardScrim?.show(top, height, 0.22);
+    } else keyboardScrim?.hide();
+    return () => keyboardScrim?.hide();
+  }, [keyboardVisible, reasoningDialOpen]);
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
+      if (state !== 'active') {
+        keyboardScrim?.hide();
+        return;
+      }
       if (state === 'active' && !attachmentSheetOpen) {
         attachmentMenuProgress.value = 0;
         setAttachmentMenuVisible(false);
         setAttachmentMenuInteractive(false);
       }
+      if (reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
+        const { top, height } = keyboardBoundsRef.current;
+        keyboardScrim?.show(top, height, 0.22);
+      }
     });
     return () => sub.remove();
-  }, [attachmentMenuProgress, attachmentSheetOpen]);
-  useEffect(() => () => { abortRef.current?.abort(); speechRunRef.current += 1; void Speech.stop(); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
+  }, [attachmentMenuProgress, attachmentSheetOpen, keyboardVisible, reasoningDialOpen]);
+  useEffect(() => () => { keyboardScrim?.hide(); abortRef.current?.abort(); speechRunRef.current += 1; void Speech.stop(); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
   useEffect(() => { speechRunRef.current += 1; setSpeakingTurnId(null); setMoreTurnId(null); setChatActionsOpen(false); void Speech.stop(); }, [activeChatId]);
   useEffect(() => { drawerProgress.value = withTiming(drawerOpen ? 1 : 0, { duration: reducedMotion ? 1 : drawerOpen ? 240 : 190, easing: Easing.out(Easing.cubic) }); }, [drawerOpen, reducedMotion, drawerProgress]);
   useFocusEffect(useCallback(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (reasoningDialOpen) { closeReasoningDial(); return true; }
       if (attachmentSheetOpen || attachmentMenuVisible) { closeAttachmentMenu(); return true; }
       if (drawerOpen) { setDrawerOpen(false); Keyboard.dismiss(); return true; }
       if (profileOpen) { setProfileOpen(false); return true; }
@@ -142,7 +185,7 @@ export default function HomeScreen() {
       return false;
     });
     return () => sub.remove();
-  }, [attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
+  }, [reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
 
   const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
   const runChatRequest = useCallback(async (request: PendingChatRequest) => {
@@ -166,7 +209,7 @@ export default function HomeScreen() {
         : request.attachment
           ? [...request.messages.slice(0, -1), { ...lastMessage, image: await imageAttachmentDataUri(request.attachment) }]
           : request.messages;
-      const result = await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal });
+      const result = await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) });
       const id = request.pendingTurnId ?? `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const rich = result.message.rich ? await persistRichReply(result.message.rich, id) : undefined;
       const turn: Turn = { id, prompt: request.prompt, locale: request.locale, status: 'complete', answer: result.message.content, ...(request.attachment ? { imageAttachment: request.attachment } : {}), ...(request.documentAttachment ? { documentAttachment: request.documentAttachment } : {}), ...(request.documentAttachment && result.documentInfo ? { documentInfo: result.documentInfo } : {}), ...(rich ? { rich } : {}) };
@@ -184,7 +227,9 @@ export default function HomeScreen() {
       const cancelled = (error as { name?: string } | null)?.name === 'AbortError';
       const disconnected = error instanceof ChatClientError && error.code === 'PROXY_UNREACHABLE';
       const code = error instanceof ChatClientError || error instanceof DocumentAttachmentError ? error.code : '';
-      const documentError: ChatRequestError | undefined = code === 'DOCUMENT_TOO_MANY_PAGES' ? 'document_too_many_pages'
+      const documentError: ChatRequestError | undefined = code === 'REASONING_IMAGE_UNSUPPORTED' ? 'reasoning_image_unsupported'
+        : code === 'REASONING_UNAVAILABLE' ? 'reasoning_unavailable'
+        : code === 'DOCUMENT_TOO_MANY_PAGES' ? 'document_too_many_pages'
         : code === 'DOCUMENT_PASSWORD' ? 'document_password'
           : code === 'DOCUMENT_NO_TEXT' ? 'document_no_text'
             : code === 'DOCUMENT_ENCODING' ? 'document_encoding'
@@ -201,25 +246,30 @@ export default function HomeScreen() {
   const send = useCallback(() => {
     const draftSnapshot = draft; const prompt = draftSnapshot.trim() || (documentAttachment ? locale === 'de' ? 'Fasse diese Datei zusammen.' : 'Summarize this file.' : locale === 'de' ? 'Was ist auf diesem Bild zu sehen?' : 'What is in this image?');
     if ((!draftSnapshot.trim() && !imageAttachment && !documentAttachment) || abortRef.current || requestRef.current?.status === 'loading') return;
+    const selectedEffort = reasoningEffortForMode(reasoningMode);
+    if (imageAttachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen im Menü „Standardmodell verwenden“ wählen. Entwurf und Bild bleiben erhalten.' : 'Choose “Use default model” in the menu before sending an image. Your draft and image are still here.'); return; }
     const requestDocument = documentRequestForPrompt(documentAttachment, Boolean(imageAttachment), activeSession.activeDocumentContext);
     const pendingTurnId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, pendingTurnId, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
+    const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}), pendingTurnId, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
     const sendStart = beginChatSend(request, pendingTurnId);
     setConversation(previous => [...previous, sendStart.turn]);
     setDraft(sendStart.composerDraft);
     setImageAttachment(current => current?.uri === sendStart.imageUri ? undefined : current);
     setDocumentAttachment(current => current?.uri === sendStart.documentUri ? undefined : current);
     void runChatRequest(request);
-  }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, conversation, locale, runChatRequest, setConversation, setDraft, setImageAttachment, setDocumentAttachment]);
+  }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, conversation, locale, reasoningMode, runChatRequest, setConversation, setDraft, setImageAttachment, setDocumentAttachment, showNotice]);
   const retryRequest = useCallback((turnId?: string) => {
     if (abortRef.current || requestRef.current?.status === 'loading') return;
     const current = requestRef.current;
     const pending = current?.pendingTurnId === turnId || !turnId ? current
       : activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
     if (!pending) return;
+    const selectedEffort = reasoningEffortForMode(reasoningMode);
+    if (pending.attachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen im Menü „Standardmodell verwenden“ wählen. Entwurf und Bild bleiben erhalten.' : 'Choose “Use default model” in the menu before retrying an image. Your draft and image are still here.'); return; }
+    const configuredRequest = { ...pending, ...(selectedEffort ? { reasoningEffort: selectedEffort } : { reasoningEffort: undefined }) };
     if (pending.pendingTurnId) setConversation(previous => updatePendingTurn(previous, pending.pendingTurnId!, 'streaming'));
-    void runChatRequest(pending);
-  }, [activeSession.retryableChatRequests, runChatRequest, setConversation]);
+    void runChatRequest(configuredRequest);
+  }, [activeSession.retryableChatRequests, runChatRequest, setConversation, reasoningMode, showNotice, locale]);
   const stopRequest = useCallback(() => abortRef.current?.abort(), []);
   const newChat = useCallback(() => {
     startNewChat(); setDrawerOpen(false); setProfileOpen(false); Keyboard.dismiss();
@@ -275,6 +325,7 @@ export default function HomeScreen() {
   }, [conversation, locale, shareText]);
 
   const hasCurrentContent = Boolean(conversation.length || draft.trim() || imageAttachment || documentAttachment || activeSession.activeDocumentContext || activeSession.pendingChatRequest || activeSession.pendingLiveRequest || activeSession.sampleSourceSelected);
+  const reasoningModeLabel = reasoningMode === 'instant' ? (locale === 'de' ? 'Sofort' : 'Instant') : reasoningMode === 'medium' ? (locale === 'de' ? 'Mittel' : 'Medium') : reasoningMode === 'high' ? (locale === 'de' ? 'Hoch' : 'High') : (locale === 'de' ? 'Standard' : 'Default');
   const retryAllowed = Boolean(requestRef.current && !requestError?.startsWith('document_'));
   const requestErrorMessage = requestError ? errorText(locale, requestError) : '';
   const showGlobalRequestError = shouldShowGlobalChatError(requestRef.current, requestStatus === 'error' && Boolean(requestError));
@@ -290,7 +341,7 @@ export default function HomeScreen() {
     left: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginLeft.value, 22]),
     top: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginTop.value, attachmentTargetTop.value]),
     width: interpolate(attachmentMenuProgress.value, [0, 1], [44, 255]),
-    height: interpolate(attachmentMenuProgress.value, [0, 1], [44, 214]),
+    height: interpolate(attachmentMenuProgress.value, [0, 1], [44, ATTACHMENT_MENU_HEIGHT]),
     borderRadius: 22,
     backgroundColor: c.surface,
     shadowOpacity: attachmentMenuProgress.value * 0.28,
@@ -397,7 +448,7 @@ export default function HomeScreen() {
   };
 
   return <GestureDetector gesture={edgeGesture}><SafeAreaView style={rootStyle} edges={['top', 'left', 'right']}>
-    <View style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
+    <View ref={dialOverlayBoundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0}>
         <View ref={attachmentBoundsRef} style={{ flex: 1 }}>
           <View style={{ height: 56, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -417,7 +468,8 @@ export default function HomeScreen() {
               <Pressable onPress={() => { setRequestStatus('idle'); setRequestError(null); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Hinweis schließen' : 'Dismiss message'} style={{ width: 30, height: 36, alignItems: 'center', justifyContent: 'center' }}><Feather name="x" size={16} color={c.muted} /></Pressable>
             </View> : null}
             {legacyRequestPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 40, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: c.raised }}><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
-            <View style={{ backgroundColor: c.surface, borderColor: c.line, borderWidth: 1, borderRadius: 28, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 5 }}>
+            <View style={{ backgroundColor: reasoningDialOpen ? 'transparent' : c.surface, borderColor: reasoningDialOpen ? 'transparent' : c.line, borderWidth: reasoningDialOpen ? 0 : 1, borderRadius: 28, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 5 }}>
+              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 5, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15 }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Wähle es im Menü, um das Bild zu senden.' : 'Image requests need Default. Choose it in the menu to send this image.'}</Text> : null}
               {imageAttachment ? <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingTop: 3, paddingBottom: 7 }}>
                 <Image source={{ uri: imageAttachment.uri }} accessibilityLabel={locale === 'de' ? 'Bild im Entwurf' : 'Image in draft'} resizeMode="cover" style={{ width: 58, height: 58, borderRadius: 11 }} />
                 <Text numberOfLines={1} style={{ flex: 1, marginLeft: 10, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12 }}>{imageAttachment.name}</Text>
@@ -429,9 +481,10 @@ export default function HomeScreen() {
                 <Pressable onPress={removeDocumentAttachment} disabled={requestStatus === 'loading'} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Datei entfernen' : 'Remove file'} style={{ width: 44, height: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="x" size={18} color={c.muted} /></Pressable>
               </View> : null}
               <View style={{ minHeight: 44, maxHeight: 136, flexDirection: 'row', alignItems: draft.includes('\n') ? 'flex-end' : 'center', gap: 4 }}>
-                <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
-                <TextInput ref={inputRef} value={draft} onChangeText={setDraft} placeholder={t.composer} placeholderTextColor={c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={t.composer} selectionColor={c.accent} style={{ flex: 1, color: c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
-                {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
+                <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
+                <TextInput ref={inputRef} value={draft} onChangeText={setDraft} placeholder={reasoningMode === 'default' ? t.composer : locale === 'de' ? 'Nachricht' : 'Message'} placeholderTextColor={reasoningDialOpen ? 'transparent' : c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={t.composer} selectionColor={reasoningDialOpen ? 'transparent' : c.accent} style={{ flex: 1, color: reasoningDialOpen ? 'transparent' : c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
+                <Pressable onPress={openReasoningDial} onLongPress={reasoningMode !== 'default' ? () => { void Haptics.selectionAsync().catch(() => undefined); setReasoningMode('default'); } : undefined} accessibilityRole="button" accessibilityLabel={`${locale === 'de' ? 'Denkstufe' : 'Thinking dial'}: ${reasoningModeLabel}`} accessibilityHint={reasoningMode !== 'default' ? (locale === 'de' ? 'Gedrückt halten, um die Denkstufe zurückzusetzen.' : 'Long press to clear the thinking mode.') : undefined} accessibilityActions={reasoningMode !== 'default' ? [{ name: 'default', label: locale === 'de' ? 'Denkmodus zurücksetzen' : 'Clear thinking mode' }] : undefined} onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'default') setReasoningMode('default'); }} accessibilityState={{ selected: reasoningMode !== 'default' }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><ReasoningGauge mode={reasoningMode} theme={theme} /></Pressable>
+                {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
               </View>
             </View>
           </View>
@@ -439,6 +492,7 @@ export default function HomeScreen() {
             <Pressable onPress={() => setChatActionsOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen schließen' : 'Close chat actions'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
             <View style={{ position: 'absolute', top: 56, right: 12, minWidth: 220, backgroundColor: c.raised, borderRadius: 18, padding: 7, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }}>
               <Pressable disabled={requestStatus === 'loading'} onPress={() => { setChatActionsOpen(false); newChat(); }} accessibilityRole="button" accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="edit-3" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.newChat}</Text></Pressable>
+              {reasoningMode !== 'default' ? <Pressable onPress={() => { setReasoningMode('default'); setChatActionsOpen(false); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'} accessibilityState={{ selected: false }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="rotate-ccw" size={17} color={c.accent} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'}</Text></Pressable> : null}
               <Pressable disabled={!conversation.length} onPress={shareConversation} accessibilityRole="button" accessibilityState={{ disabled: !conversation.length }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: conversation.length ? 1 : 0.45 }}><Feather name="share" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Transkript teilen' : 'Share transcript'}</Text></Pressable>
               {activeSession.activeDocumentContext ? <Pressable onPress={() => { forgetDocumentContext(); setChatActionsOpen(false); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="file-minus" size={17} color={c.text} /><Text numberOfLines={1} style={{ flex: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Dateikontext entfernen' : 'Forget document context'}</Text></Pressable> : null}
               <Pressable onPress={() => { setChatActionsOpen(false); openSettings(); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="settings" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.profile}</Text></Pressable>
@@ -455,7 +509,9 @@ export default function HomeScreen() {
                     { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
                     { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
                     { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-                  ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => void chooseAttachment(item.key)} accessibilityRole="button" style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
+                  ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => {
+                    void chooseAttachment(item.key);
+                  }} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
                     <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
                     <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
                   </Pressable>)}
@@ -466,6 +522,14 @@ export default function HomeScreen() {
         </View>
       </KeyboardAvoidingView>
     </View>
+
+    {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
+      <Pressable onPress={closeReasoningDial} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000066' }} />
+      <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} accessibilityViewIsModal style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? dialKeyboardBottomOffset : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
+        <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={{ instant: locale === 'de' ? 'Sofort' : 'Instant', medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: locale === 'de' ? 'Aufwand' : 'effort', chooseEffort: locale === 'de' ? 'Denkaufwand wählen' : 'Choose effort' }} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
+        {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ width: '84%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8, textAlign: 'center' }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Schließe den Regler und wähle es im Menü; dein Bild bleibt im Entwurf.' : 'Image requests need the default model. Close this dial and choose it in the menu; your image stays in the draft.'}</Text> : null}
+      </Animated.View>
+    </Animated.View> : null}
 
     <Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!drawerOpen} style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, backdropStyle]}><Pressable onPress={closeDrawer} accessibilityLabel={t.close} accessibilityRole="button" style={{ flex: 1, marginLeft: drawerWidth }} /></Animated.View>
     <GestureDetector gesture={drawerGesture}><Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} accessibilityViewIsModal={drawerOpen} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!drawerOpen} style={[{ position: 'absolute', top: 0, bottom: 0, left: 0, width: drawerWidth, backgroundColor: theme === 'dark' ? '#0D0D0D' : '#F7F7F5', paddingTop: insets.top + 10, paddingBottom: insets.bottom + 10 }, drawerStyle]}>

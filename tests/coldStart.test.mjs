@@ -27,6 +27,7 @@ test('archives a populated active chat and opens a blank fresh session while pre
   const quiz = { grading: 'complete', grade: { correct: true } };
   const richTurn = turn({ status: 'streaming', liveProgress: { blocks: { quiz: { quiz } } } });
   const state = baseState({
+    reasoningMode: 'high',
     conversation: [richTurn],
     activeSession: { sampleSourceSelected: true },
     savedConversations: [{ id: 'older', title: 'Older', turns: [turn({ id: 'older-turn' })] }],
@@ -36,6 +37,7 @@ test('archives a populated active chat and opens a blank fresh session while pre
 
   assert.equal(fresh.theme, 'light');
   assert.equal(fresh.locale, 'en');
+  assert.equal(fresh.reasoningMode, 'high', 'the selected reasoning mode remains an app preference on cold launch');
   assert.equal(fresh.activeChatId, 'fresh-id');
   assert.deepEqual(fresh.conversation, []);
   assert.equal(fresh.draft, '');

@@ -1,6 +1,7 @@
 import type { Locale } from '../design/theme';
 import type { ImageAttachment } from '../chat/imageAttachment';
 import type { DocumentAttachment } from '../chat/documentAttachment';
+import type { ReasoningMode } from '../chat/reasoningEffort';
 import type { Turn } from './AppState';
 import type { ChatSession } from './chatSession';
 
@@ -17,6 +18,7 @@ export type ColdStartSavedConversation = {
 export type ColdStartState = {
   theme: 'dark' | 'light';
   locale: Locale;
+  reasoningMode?: ReasoningMode;
   draft: string;
   imageAttachment?: ImageAttachment;
   documentAttachment?: DocumentAttachment;
