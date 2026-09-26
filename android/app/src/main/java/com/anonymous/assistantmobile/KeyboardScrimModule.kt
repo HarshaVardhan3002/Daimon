@@ -2,10 +2,13 @@ package com.anonymous.assistantmobile
 
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import java.util.concurrent.atomic.AtomicLong
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
@@ -29,22 +32,29 @@ class KeyboardScrimModule(
   private var overlay: View? = null
   private var overlayManager: WindowManager? = null
   private var overlayActivity: android.app.Activity? = null
+  private val requestGeneration = AtomicLong(0)
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   override fun getName(): String = "KeyboardScrim"
 
   @ReactMethod
   fun show(top: Double, height: Double, opacity: Double) {
-    val activity = currentActivity ?: return
-    val safeTop = top.toFloat().takeIf { it.isFinite() && it >= 0f } ?: return
-    val safeHeight = height.toFloat().takeIf { it.isFinite() && it > 0f } ?: return
+    val activity = reactContext.currentActivity ?: return
+    val safeTop = top.toFloat().takeIf { it.isFinite() && it >= 0f } ?: run { hide(); return }
+    val safeHeight = height.toFloat().takeIf { it.isFinite() && it > 0f } ?: run { hide(); return }
     val safeOpacity = opacity.toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 0.45f) ?: 0.22f
+    val generation = requestGeneration.incrementAndGet()
 
     activity.runOnUiThread {
-      if (currentActivity !== activity || activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+      if (requestGeneration.get() != generation || reactContext.currentActivity !== activity || activity.isFinishing || activity.isDestroyed) return@runOnUiThread
       val manager = activity.getSystemService(WindowManager::class.java) ?: return@runOnUiThread
       val density = activity.resources.displayMetrics.density
-      val topPx = (safeTop * density).toInt()
-      val heightPx = (safeHeight * density).toInt().coerceAtLeast(1)
+      val screenHeight = activity.resources.displayMetrics.heightPixels.coerceAtLeast(1)
+      val requestedTop = (safeTop * density).toInt()
+      val topPx = requestedTop.coerceIn(0, screenHeight - 1)
+      val requestedBottom = ((safeTop + safeHeight) * density).toInt()
+      val bottomPx = requestedBottom.coerceIn(topPx + 1, screenHeight)
+      val heightPx = bottomPx - topPx
 
       val currentOverlay = overlay
       if (currentOverlay != null && overlayActivity === activity && overlayManager === manager) {
@@ -77,8 +87,6 @@ class KeyboardScrimModule(
         x = 0
         y = topPx
         token = activity.window.decorView.windowToken
-        softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or
-          WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
         dimAmount = 0f
         setTitle("DaimonKeyboardScrim")
       }
@@ -93,17 +101,17 @@ class KeyboardScrimModule(
 
   @ReactMethod
   fun hide() {
-    val activity = currentActivity ?: overlayActivity
-    if (activity == null) {
-      removeOverlay()
-      return
-    }
-    activity.runOnUiThread { removeOverlay() }
+    val generation = requestGeneration.incrementAndGet()
+    val activity = reactContext.currentActivity ?: overlayActivity
+    val cleanup = Runnable { if (requestGeneration.get() == generation) removeOverlay() }
+    if (activity != null) activity.runOnUiThread(cleanup) else mainHandler.post(cleanup)
   }
 
   override fun invalidate() {
-    val activity = currentActivity ?: overlayActivity
-    if (activity == null) removeOverlay() else activity.runOnUiThread { removeOverlay() }
+    val generation = requestGeneration.incrementAndGet()
+    val activity = reactContext.currentActivity ?: overlayActivity
+    val cleanup = Runnable { if (requestGeneration.get() == generation) removeOverlay() }
+    if (activity != null) activity.runOnUiThread(cleanup) else mainHandler.post(cleanup)
     super.invalidate()
   }
 
