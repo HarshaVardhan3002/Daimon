@@ -7,7 +7,7 @@ group = 'com.anonymous.assistantmobile'
 version = '1.0.0'
 
 android {
-  namespace "expo.modules.camerafocus"
+  namespace "expo.modules.daimoncamera"
   defaultConfig {
     versionCode 1
     versionName '1.0.0'

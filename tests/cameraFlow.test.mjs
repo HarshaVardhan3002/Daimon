@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted } from '../src/chat/cameraFlow.ts';
+import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed } from '../src/chat/cameraFlow.ts';
 
 const run = (state, ...events) => events.reduce(cameraFlowReducer, state);
 const photo = { uri: 'file:///cache/Camera/shot.jpg', width: 1536, height: 2048 };
@@ -11,13 +11,17 @@ const live = () => {
   return run(next, { type: 'ready', session: next.session, mountKey: next.mountKey });
 };
 
-test('The preview mounts only after the sheet expands and permission is granted', () => {
+test('The camera starts as soon as access is granted, but is only revealed and usable once the sheet settles', () => {
   const state = opened();
   assert.equal(state.phase, 'checking');
-  assert.equal(isCameraMounted(run(state, { type: 'permission', session: state.session, permission: 'granted' })), false, 'sheet still moving');
-  assert.equal(isCameraMounted(run(state, { type: 'expanded', session: state.session })), false, 'permission unknown');
+  assert.equal(isCameraMounted(state), false, 'permission unknown');
+  const granted = run(state, { type: 'permission', session: state.session, permission: 'granted' });
+  assert.equal(isCameraMounted(granted), true, 'mounts while the sheet is still growing');
+  const readyEarly = run(granted, { type: 'ready', session: granted.session, mountKey: granted.mountKey });
+  assert.equal(isPreviewRevealed(readyEarly), false, 'frames before the sheet settles stay hidden');
+  assert.equal(canCapture(readyEarly), false);
   const ready = live();
-  assert.equal(isCameraMounted(ready), true);
+  assert.equal(isPreviewRevealed(ready), true);
   assert.equal(canCapture(ready), true);
 });
 

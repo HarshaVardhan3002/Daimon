@@ -8,7 +8,7 @@ export type CameraFlowState = {
   session: number;
   phase: CameraPhase;
   permission: CameraPermission;
-  /** The sheet finished its entrance; the native preview only mounts after this so it never shows through a moving sheet. */
+  /** The sheet finished growing. The preview mounts earlier to start the camera sooner, but is only revealed and usable after this. */
   expanded: boolean;
   /** App is in the background; the camera is released until it returns. */
   suspended: boolean;
@@ -42,8 +42,9 @@ export type CameraFlowEvent =
 
 export const initialCameraFlow: CameraFlowState = { session: 0, phase: 'closed', permission: 'unknown', expanded: false, suspended: false, ready: false, capturing: false, mountKey: 0 };
 
-export const isCameraMounted = (state: CameraFlowState) => state.phase === 'camera' && state.expanded && !state.suspended;
-export const canCapture = (state: CameraFlowState) => isCameraMounted(state) && state.ready && !state.capturing;
+export const isCameraMounted = (state: CameraFlowState) => state.phase === 'camera' && !state.suspended;
+export const isPreviewRevealed = (state: CameraFlowState) => isCameraMounted(state) && state.expanded && state.ready;
+export const canCapture = (state: CameraFlowState) => isPreviewRevealed(state) && !state.capturing;
 /** Tapping the chat above the sheet dismisses it, except while a photo is being taken or kept. */
 export const canDismissFromOutside = (state: CameraFlowState) => !state.capturing && state.phase !== 'review' && state.phase !== 'saving';
 

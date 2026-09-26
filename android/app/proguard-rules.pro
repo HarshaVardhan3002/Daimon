@@ -13,5 +13,5 @@
 
 # Add any project specific keep options here:
 
-# In-app camera tap-to-focus (modules/camera-focus) reads expo-camera's bound CameraX camera by name.
--keepclassmembers class expo.modules.camera.ExpoCameraView { *** camera; }
+# modules/daimon-camera reads expo-camera's bound CameraX camera and calls resumePreview by name.
+-keepclassmembers class expo.modules.camera.ExpoCameraView { *** camera; public void resumePreview(); }

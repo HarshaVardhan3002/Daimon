@@ -75,6 +75,8 @@ export default function HomeScreen() {
   const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
   // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
   const attachmentCameraHandoff = useSharedValue(0);
+  // 1 while the camera sheet is drawn over the menu card's place; the card itself hides so the two never double up.
+  const attachmentCameraCovering = useSharedValue(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
 
@@ -124,28 +126,37 @@ export default function HomeScreen() {
     setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
     cameraOpenRef.current = true; setCameraOpen(true);
     if (!fromMenu) return;
-    // The sheet grows out of the menu card; fade the menu underneath instead of shrinking it back into the plus.
     setAttachmentSheetOpen(false); setAttachmentMenuInteractive(false);
-    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 240 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
-  }, [attachmentCameraHandoff, attachmentMenuVisible, attachmentTargetTop, finishCameraHandoff, keyboardVisible, reducedMotion]);
+  }, [attachmentMenuVisible, attachmentTargetTop, keyboardVisible]);
+  // The sheet draws the card (colour and rows) itself as it grows, so the real card hides the frame the sheet covers it.
+  const onCameraEnterStart = useCallback(() => {
+    if (!attachmentMenuVisible) return;
+    attachmentCameraCovering.value = 1;
+    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 220 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
+  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuVisible, finishCameraHandoff, reducedMotion]);
+  const onCameraExited = useCallback((to: 'menu' | 'chat') => {
+    attachmentCameraCovering.value = 0;
+    if (to === 'menu') setAttachmentMenuInteractive(true);
+  }, [attachmentCameraCovering]);
   const closeCamera = useCallback((to: 'menu' | 'chat') => {
     cameraOpenRef.current = false;
     const backToMenu = to === 'menu' && cameraOrigin !== null;
     setCameraExitTo(backToMenu ? cameraOrigin : null);
     setCameraOpen(false);
     if (!backToMenu) return;
-    // Backing out returns to the attachment menu the camera grew from: the menu fades back in beneath the shrinking sheet.
+    // Backing out returns to the attachment menu the camera grew from. The sheet shrinks into the card's place and
+    // hands over to it when it lands (onCameraExited); only the dimmed backdrop fades in here.
     attachmentMenuProgress.value = 1;
+    attachmentCameraCovering.value = 1;
     attachmentCameraHandoff.value = 1;
     setAttachmentMenuVisible(true); setAttachmentSheetOpen(true); setAttachmentMenuInteractive(false);
-    // Same curve as the sheet's shrink, so the card and its items only reappear once the sheet has nearly reached them.
-    attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 260, easing: Easing.bezier(0.3, 0, 0, 1) }, finished => { if (finished) runOnJS(setAttachmentMenuInteractive)(true); });
+    attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 220, easing: Easing.bezier(0.3, 0, 0.2, 1) });
     if (cameraRestoresKeyboardRef.current) {
       // Blur first so focus() is a real focus change on Android and raises the keyboard again.
       inputRef.current?.blur();
       setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
     }
-  }, [attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
+  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -390,13 +401,25 @@ export default function HomeScreen() {
     borderRadius: 22,
     backgroundColor: c.surface,
     shadowOpacity: attachmentMenuProgress.value * 0.28 * (1 - attachmentCameraHandoff.value),
-    opacity: interpolate(attachmentCameraHandoff.value, [0.3, 0.6], [1, 0], Extrapolation.CLAMP),
+    opacity: 1 - attachmentCameraCovering.value,
   }));
+  // Also drawn (inert) inside the camera sheet, so the rows fade within the card as it grows into the viewfinder and back.
+  const attachmentRows = (live: boolean) => ([
+    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
+    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
+    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
+  ]).map(item => <Pressable key={item.key} disabled={!live || !attachmentMenuInteractive} onPress={() => {
+    if (item.key === 'camera') openCamera();
+    else void chooseAttachment(item.key);
+  }} accessible={live} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
+    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
+    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
+  </Pressable>);
   const attachmentPlusStyle = useAnimatedStyle(() => ({
     opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
   }));
   const attachmentContentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP) * interpolate(attachmentCameraHandoff.value, [0, 0.35], [1, 0], Extrapolation.CLAMP),
+    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP),
     transform: [{ translateY: interpolate(attachmentMenuProgress.value, [0, 1], [10, 0]) }],
   }));
   const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen && !cameraOpen), [cameraOpen, drawerOpen, gestureStartX, openDrawer]);
@@ -550,17 +573,7 @@ export default function HomeScreen() {
               <View accessibilityViewIsModal={attachmentMenuInteractive} accessibilityElementsHidden={!attachmentMenuInteractive} importantForAccessibility={attachmentMenuInteractive ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentMenuInteractive} style={{ flex: 1, backgroundColor: 'transparent', borderRadius: 22, overflow: 'hidden', paddingHorizontal: 12, paddingVertical: 8 }}>
                 <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }, attachmentPlusStyle]}><Feather name="plus" size={23} color={c.muted} /></Animated.View>
                 <Animated.View pointerEvents={attachmentMenuInteractive ? 'auto' : 'none'} style={[{ flex: 1 }, attachmentContentStyle]}>
-                  {([
-                    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
-                    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
-                    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-                  ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => {
-                    if (item.key === 'camera') openCamera();
-                    else void chooseAttachment(item.key);
-                  }} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
-                    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
-                    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
-                  </Pressable>)}
+                  {attachmentRows(true)}
                 </Animated.View>
               </View>
             </Animated.View>
@@ -568,7 +581,7 @@ export default function HomeScreen() {
         </View>
       </KeyboardAvoidingView>
       {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
-      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} locale={locale} palette={{ surface: c.surface, canvas: c.canvas }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onAccept={attachCapturedPhoto} /> : null}
+      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={<View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>{attachmentRows(false)}</View>} locale={locale} palette={{ surface: c.surface }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} /> : null}
     </View>
 
     {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>

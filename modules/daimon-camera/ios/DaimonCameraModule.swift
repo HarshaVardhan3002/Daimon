@@ -1,11 +1,16 @@
 import AVFoundation
 import ExpoModulesCore
 
-/// Tap-to-focus for expo-camera's CameraView. AVCaptureDevice is shared per physical camera, so configuring it
+/// Native touches for expo-camera's CameraView. AVCaptureDevice is shared per physical camera, so configuring it
 /// here steers the session expo-camera already runs without touching that session.
-public class CameraFocusModule: Module {
+public class DaimonCameraModule: Module {
   public func definition() -> ModuleDefinition {
-    Name("CameraFocus")
+    Name("DaimonCamera")
+
+    // The iOS preview is an AVCaptureVideoPreviewLayer, which already clips, fades and scales with its view.
+    AsyncFunction("preferTexturePreview") { () -> Bool in
+      return true
+    }
 
     // x and y are fractions of the portrait viewfinder (0...1, top-left origin).
     AsyncFunction("focusAt") { (x: Double, y: Double, facing: String) -> Bool in

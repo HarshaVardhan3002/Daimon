@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
-  s.name           = 'CameraFocus'
+  s.name           = 'DaimonCamera'
   s.version        = '1.0.0'
-  s.summary        = 'Tap-to-focus for the Daimon in-app camera'
+  s.summary        = 'Native camera touches for the Daimon in-app camera'
   s.description    = 'Sets the focus and exposure point of the active capture device used by expo-camera.'
   s.author         = 'Daimon'
   s.homepage       = 'https://docs.expo.dev/modules/'
