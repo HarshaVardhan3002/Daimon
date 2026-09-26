@@ -1,4 +1,5 @@
-# Fresh install, camera permission not yet decided: attachment menu -> Camera -> system prompt -> Don't Allow.
+# Camera access revoked before launch (simctl privacy revoke): attachment menu -> Camera -> denied state -> back.
+# If iOS still shows its own prompt, answer Don't Allow.
 appId: ${APP_ID}
 ---
 - launchApp:
@@ -12,15 +13,16 @@ appId: ${APP_ID}
 - takeScreenshot: ios-02-attachment-menu
 - tapOn: "Camera"
 - takeScreenshot: ios-03-camera-entry
-- extendedWaitUntil:
-    visible: "Don.t Allow"
-    timeout: 15000
-- takeScreenshot: ios-04-permission-prompt
-- tapOn: "Don.t Allow"
+- runFlow:
+    when:
+      visible: "Don.t Allow"
+    commands:
+      - takeScreenshot: ios-04-permission-prompt
+      - tapOn: "Don.t Allow"
 - extendedWaitUntil:
     visible: "Camera access is off"
     timeout: 15000
-- assertVisible: "Open Settings"
+- assertVisible: "Open Settings|Allow camera"
 - takeScreenshot: ios-05-permission-denied
 - tapOn: "Close camera"
 - waitForAnimationToEnd
