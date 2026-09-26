@@ -60,6 +60,7 @@ export default function HomeScreen() {
   const scrollRef = useRef<ScrollView>(null); const inputRef = useRef<TextInput>(null); const followsBottom = useRef(true);
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
+  const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
 
@@ -104,9 +105,19 @@ export default function HomeScreen() {
   }, [hydrated, activeChatId]);
   useEffect(() => { AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion).catch(() => undefined); const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion); return () => sub.remove(); }, []);
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const show = Keyboard.addListener('keyboardDidShow', event => {
+      setKeyboardVisible(true);
+      requestAnimationFrame(() => {
+        attachmentBoundsRef.current?.measureInWindow((_x, y, _width, height) => {
+          const rootBottom = y + height;
+          const imeTop = event.endCoordinates.screenY;
+          setDialKeyboardBottomOffset(Math.max(0, rootBottom - imeTop + 12));
+        });
+      });
+    });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       setKeyboardVisible(false);
+      setDialKeyboardBottomOffset(0);
       if (!attachmentSheetOpen) return;
       const plus = attachmentPlusRef.current;
       const bounds = attachmentBoundsRef.current;
@@ -458,6 +469,7 @@ export default function HomeScreen() {
             <Pressable onPress={() => setChatActionsOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen schließen' : 'Close chat actions'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
             <View style={{ position: 'absolute', top: 56, right: 12, minWidth: 220, backgroundColor: c.raised, borderRadius: 18, padding: 7, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }}>
               <Pressable disabled={requestStatus === 'loading'} onPress={() => { setChatActionsOpen(false); newChat(); }} accessibilityRole="button" accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="edit-3" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.newChat}</Text></Pressable>
+              {reasoningMode !== 'default' ? <Pressable onPress={() => { setReasoningMode('default'); setChatActionsOpen(false); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'} accessibilityState={{ selected: false }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="rotate-ccw" size={17} color={c.accent} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'}</Text></Pressable> : null}
               <Pressable disabled={!conversation.length} onPress={shareConversation} accessibilityRole="button" accessibilityState={{ disabled: !conversation.length }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: conversation.length ? 1 : 0.45 }}><Feather name="share" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Transkript teilen' : 'Share transcript'}</Text></Pressable>
               {activeSession.activeDocumentContext ? <Pressable onPress={() => { forgetDocumentContext(); setChatActionsOpen(false); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="file-minus" size={17} color={c.text} /><Text numberOfLines={1} style={{ flex: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Dateikontext entfernen' : 'Forget document context'}</Text></Pressable> : null}
               <Pressable onPress={() => { setChatActionsOpen(false); openSettings(); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="settings" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.profile}</Text></Pressable>
@@ -485,8 +497,8 @@ export default function HomeScreen() {
             </Animated.View>
           </View> : null}
           {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
-            <Pressable onPress={() => setReasoningDialOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000A8' }} />
-            <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} accessibilityViewIsModal style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? 14 : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
+            <Pressable onPress={() => setReasoningDialOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000066' }} />
+            <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} accessibilityViewIsModal style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? dialKeyboardBottomOffset : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
               <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={{ instant: locale === 'de' ? 'Sofort' : 'Instant', medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: locale === 'de' ? 'Aufwand' : 'effort', chooseEffort: locale === 'de' ? 'Denkaufwand wählen' : 'Choose effort' }} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
               {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ width: '84%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8, textAlign: 'center' }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Schließe den Regler und tippe auf das × im Denkstufen-Chip; dein Bild bleibt im Entwurf.' : 'Image requests need the default model. Close this dial and tap × in the thinking chip; your image stays in the draft.'}</Text> : null}
             </Animated.View>
