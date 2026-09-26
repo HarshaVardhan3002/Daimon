@@ -7,8 +7,10 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible: "Add attachment"
     timeout: 60000
+- takeScreenshot: ios-01-home
 - tapOn: "Add attachment"
 - waitForAnimationToEnd
+- takeScreenshot: ios-02-attachment-menu
 - tapOn: "Camera"
 - takeScreenshot: ios-07-camera-entry
 - extendedWaitUntil:
