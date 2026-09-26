@@ -143,6 +143,13 @@ export default function HomeScreen() {
     const backToMenu = to === 'menu' && cameraOrigin !== null;
     setCameraExitTo(backToMenu ? cameraOrigin : null);
     setCameraOpen(false);
+    // Every exit (back to the menu, outside tap, Use photo) gives the draft its keyboard back if the camera took it.
+    if (cameraRestoresKeyboardRef.current) {
+      cameraRestoresKeyboardRef.current = false;
+      // Blur first so focus() is a real focus change on Android and raises the keyboard again.
+      inputRef.current?.blur();
+      setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
+    }
     if (!backToMenu) return;
     // Backing out returns to the attachment menu the camera grew from. The sheet shrinks into the card's place and
     // hands over to it when it lands (onCameraExited); only the dimmed backdrop fades in here.
@@ -151,11 +158,6 @@ export default function HomeScreen() {
     attachmentCameraHandoff.value = 1;
     setAttachmentMenuVisible(true); setAttachmentSheetOpen(true); setAttachmentMenuInteractive(false);
     attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 220, easing: Easing.bezier(0.3, 0, 0.2, 1) });
-    if (cameraRestoresKeyboardRef.current) {
-      // Blur first so focus() is a real focus change on Android and raises the keyboard again.
-      inputRef.current?.blur();
-      setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
-    }
   }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
 
   useEffect(() => {
@@ -415,6 +417,10 @@ export default function HomeScreen() {
     <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
     <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
   </Pressable>);
+  // Stable so the memoised camera sheet skips the chat's per-keystroke renders; the ghost rows are inert, so only
+  // their look matters here.
+  const cameraGhost = useMemo(() => <View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>{attachmentRows(false)}</View>, [locale, c.raised, c.text]);
+  const cameraPalette = useMemo(() => ({ surface: c.surface }), [c.surface]);
   const attachmentPlusStyle = useAnimatedStyle(() => ({
     opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
   }));
@@ -581,7 +587,7 @@ export default function HomeScreen() {
         </View>
       </KeyboardAvoidingView>
       {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
-      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={<View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>{attachmentRows(false)}</View>} locale={locale} palette={{ surface: c.surface }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} /> : null}
+      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} /> : null}
     </View>
 
     {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>

@@ -21,36 +21,43 @@ class DaimonCameraModule : Module() {
 
     // expo-camera leaves PreviewView in PERFORMANCE mode, i.e. a SurfaceView that ignores view clipping, alpha and
     // scaling. A TextureView lets the preview round its corners and ride the sheet's morph like any other view.
+    // Resolves "missing" when no preview is attached yet (call again once the camera reports ready), "texture" when the
+    // texture was chosen before the first surface request, or "rebound" when a SurfaceView had to be rebound.
     AsyncFunction("preferTexturePreview") {
-      val preview = findPreview() ?: return@AsyncFunction false
-      preview.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-      // Too late for the first surface request: rebind so the next request picks up the texture.
-      if ((0 until preview.childCount).any { preview.getChildAt(it) is SurfaceView }) {
-        val cameraView = preview.parent as? ViewGroup ?: return@AsyncFunction false
-        try {
-          cameraView.javaClass.getMethod("resumePreview").invoke(cameraView)
-        } catch (_: ReflectiveOperationException) {
-          return@AsyncFunction false
-        }
+      try {
+        val preview = findPreview() ?: return@AsyncFunction "missing"
+        preview.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        // Too late for the first surface request: rebind once so the next request picks up the texture.
+        if ((0 until preview.childCount).none { preview.getChildAt(it) is SurfaceView }) return@AsyncFunction "texture"
+        val cameraView = preview.parent as? ViewGroup ?: return@AsyncFunction "missing"
+        cameraView.javaClass.getMethod("resumePreview").invoke(cameraView)
+        "rebound"
+      } catch (_: Exception) {
+        // Stays on the default SurfaceView preview, which still works; only the morph loses its clipping.
+        "failed"
       }
-      true
     }.runOnQueue(Queues.MAIN)
 
     // x and y are fractions of the viewfinder (0..1, top-left origin). Resolves false when no preview is live.
     AsyncFunction("focusAt") { x: Double, y: Double, _: String ->
-      val preview = findPreview() ?: return@AsyncFunction false
-      val camera = (preview.parent as? ViewGroup)?.let { boundCamera(it) } ?: return@AsyncFunction false
-      if (preview.width <= 0 || preview.height <= 0) return@AsyncFunction false
-      val point = preview.meteringPointFactory.createPoint(
-        (x.coerceIn(0.0, 1.0) * preview.width).toFloat(),
-        (y.coerceIn(0.0, 1.0) * preview.height).toFloat()
-      )
-      val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-        .setAutoCancelDuration(4, TimeUnit.SECONDS)
-        .build()
-      camera.cameraControl.startFocusAndMetering(action)
-      true
+      try { focus(x, y) } catch (_: Exception) { false }
     }.runOnQueue(Queues.MAIN)
+  }
+
+  // Optional nicety: any failure leaves the camera's own continuous autofocus in charge.
+  private fun focus(x: Double, y: Double): Boolean {
+    val preview = findPreview() ?: return false
+    val camera = (preview.parent as? ViewGroup)?.let { boundCamera(it) } ?: return false
+    if (preview.width <= 0 || preview.height <= 0) return false
+    val point = preview.meteringPointFactory.createPoint(
+      (x.coerceIn(0.0, 1.0) * preview.width).toFloat(),
+      (y.coerceIn(0.0, 1.0) * preview.height).toFloat()
+    )
+    val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+      .setAutoCancelDuration(4, TimeUnit.SECONDS)
+      .build()
+    camera.cameraControl.startFocusAndMetering(action)
+    return true
   }
 
   private fun findPreview(): PreviewView? {

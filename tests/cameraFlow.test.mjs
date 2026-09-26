@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed } from '../src/chat/cameraFlow.ts';
+import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, initialTextureAttempt, isCameraMounted, isPreviewRevealed, textureAttemptReducer } from '../src/chat/cameraFlow.ts';
 
 const run = (state, ...events) => events.reduce(cameraFlowReducer, state);
 const photo = { uri: 'file:///cache/Camera/shot.jpg', width: 1536, height: 2048 };
@@ -118,4 +118,38 @@ test('Outside taps dismiss the live camera but never a photo under review', () =
   const capturing = run(live(), { type: 'captureStart' });
   assert.equal(canDismissFromOutside(capturing), false);
   assert.equal(canDismissFromOutside(run(capturing, { type: 'captured', session: capturing.session, photo })), false);
+});
+
+const texture = (...events) => {
+  let state = initialTextureAttempt; const retries = [];
+  for (const event of events) { const out = textureAttemptReducer(state, event); state = out.state; retries.push(out.retry); }
+  return { state, retries };
+};
+
+test('A preview that was not attached yet is re-requested once, whether ready or the first result arrives first', () => {
+  const resultFirst = texture({ type: 'result', mountKey: 3, result: 'missing' }, { type: 'ready', mountKey: 3 });
+  assert.deepEqual(resultFirst.retries, [false, true]);
+  const readyFirst = texture({ type: 'ready', mountKey: 3 }, { type: 'result', mountKey: 3, result: 'missing' });
+  assert.deepEqual(readyFirst.retries, [false, true], 'a warm camera reporting ready before the request settles still retries');
+});
+
+test('The texture retry never repeats, even if the retry misses or the camera reports ready again after a rebind', () => {
+  const { retries } = texture(
+    { type: 'result', mountKey: 3, result: 'missing' }, { type: 'ready', mountKey: 3 },
+    { type: 'result', mountKey: 3, result: 'missing' }, { type: 'ready', mountKey: 3 }, { type: 'ready', mountKey: 3 },
+  );
+  assert.deepEqual(retries, [false, true, false, false, false]);
+  const settled = texture({ type: 'result', mountKey: 3, result: 'rebound' }, { type: 'ready', mountKey: 3 }, { type: 'ready', mountKey: 3 });
+  assert.deepEqual(settled.retries, [false, false, false]);
+});
+
+test('Texture events from a replaced preview are ignored and a newer preview gets its own single retry', () => {
+  const { state, retries } = texture(
+    { type: 'ready', mountKey: 4 },
+    { type: 'result', mountKey: 3, result: 'missing' },
+    { type: 'result', mountKey: 4, result: 'missing' },
+    { type: 'result', mountKey: 5, result: 'missing' }, { type: 'ready', mountKey: 5 },
+  );
+  assert.deepEqual(retries, [false, false, true, false, true]);
+  assert.equal(state.mountKey, 5);
 });

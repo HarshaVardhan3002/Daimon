@@ -93,3 +93,25 @@ export function cameraFlowReducer(state: CameraFlowState, event: CameraFlowEvent
       return state.notice ? { ...state, notice: undefined } : state;
   }
 }
+
+/** Outcome of asking the native side for a TextureView-backed preview (see modules/daimon-camera). */
+export type TexturePreviewResult = 'texture' | 'rebound' | 'missing' | 'failed' | 'unsupported';
+export type TextureAttempt = { mountKey: number; result: TexturePreviewResult | 'pending'; ready: boolean; retried: boolean };
+export type TextureEvent =
+  | { type: 'result'; mountKey: number; result: TexturePreviewResult }
+  | { type: 'ready'; mountKey: number };
+
+export const initialTextureAttempt: TextureAttempt = { mountKey: -1, result: 'pending', ready: false, retried: false };
+
+/**
+ * The first request can run before the native preview is attached ('missing'). It is asked exactly once more, as soon
+ * as both that result and the camera's ready event are in, in whichever order they arrive. Events for a newer preview
+ * start a fresh attempt; events for an older one are ignored.
+ */
+export function textureAttemptReducer(state: TextureAttempt, event: TextureEvent): { state: TextureAttempt; retry: boolean } {
+  if (event.mountKey < state.mountKey) return { state, retry: false };
+  const current = event.mountKey > state.mountKey ? { ...initialTextureAttempt, mountKey: event.mountKey } : state;
+  const next = event.type === 'ready' ? { ...current, ready: true } : { ...current, result: event.result };
+  if (next.result === 'missing' && next.ready && !next.retried) return { state: { ...next, result: 'pending', retried: true }, retry: true };
+  return { state: next, retry: false };
+}

@@ -2,12 +2,12 @@ import { Feather } from '@expo/vector-icons';
 import { Camera, CameraView, type CameraType } from 'expo-camera';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useReducer, useRef, useState } from 'react';
+import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Image, Linking, Platform, Pressable, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Animated, { Easing, interpolate, interpolateColor, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
 import { focusCameraAt, preferTexturePreview } from '../../modules/daimon-camera';
 import type { Locale } from '../design/theme';
-import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed, type CameraFlowState, type CapturedPhoto } from './cameraFlow';
+import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed, textureAttemptReducer, initialTextureAttempt, type CameraFlowState, type CapturedPhoto, type TextureAttempt, type TextureEvent } from './cameraFlow';
 
 export type CameraSheetRect = { x: number; y: number; width: number; height: number };
 export type CameraSheetHandle = { handleBack: () => boolean };
@@ -65,7 +65,8 @@ const FOCUS_RING = 68;
 
 const deleteCapture = (uri: string) => { void LegacyFileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined); };
 
-export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraSheet({ open, origin, ghost, locale, palette, reducedMotion, bottomInset, topReserve, exitTo, onRequestClose, onEnterStart, onExited, onAccept }, ref) {
+// Memoised: it stays mounted under the chat, which re-renders on every keystroke and streamed update.
+export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function CameraSheet({ open, origin, ghost, locale, palette, reducedMotion, bottomInset, topReserve, exitTo, onRequestClose, onEnterStart, onExited, onAccept }, ref) {
   const de = locale === 'de';
   const [state, dispatch] = useReducer(cameraFlowReducer, initialCameraFlow);
   const stateRef = useRef<CameraFlowState>(state); stateRef.current = state;
@@ -187,7 +188,23 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
   }, [revealed, open, live, reducedMotion]);
 
   // A TextureView-backed preview clips to the sheet's corners and can scale with it while it shrinks.
-  useEffect(() => { if (mounted) void preferTexturePreview(); }, [mounted, state.mountKey]);
+  // The native preview may not be attached yet when this runs ('missing'); textureAttemptReducer then asks exactly once
+  // more after the camera reports ready. Ready can also arrive first for a warm camera; both orders converge.
+  const textureRef = useRef<TextureAttempt>(initialTextureAttempt);
+  const onTextureEvent = useCallback((event: TextureEvent) => {
+    const { state: next, retry } = textureAttemptReducer(textureRef.current, event);
+    textureRef.current = next;
+    if (retry) void preferTexturePreview().then(result => onTextureEvent({ type: 'result', mountKey: event.mountKey, result }));
+  }, []);
+  useEffect(() => {
+    if (!mounted) return;
+    const mountKey = state.mountKey;
+    void preferTexturePreview().then(result => onTextureEvent({ type: 'result', mountKey, result }));
+  }, [mounted, state.mountKey, onTextureEvent]);
+  const onCameraReady = useCallback((session: number, mountKey: number) => {
+    dispatch({ type: 'ready', session, mountKey });
+    onTextureEvent({ type: 'ready', mountKey });
+  }, [onTextureEvent]);
 
   useEffect(() => {
     if (!mounted || state.ready) return;
@@ -354,8 +371,13 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
   }, []);
 
   const shownPhoto = state.photo ?? (!open ? lastPhotoRef.current : undefined);
-  const reviewing = state.phase === 'review' || state.phase === 'saving';
-  const showCameraControls = state.phase !== 'review' && state.phase !== 'saving';
+  // The reducer closes instantly, but the sheet is still animating out: keep drawing the controls it had so they fade
+  // with it instead of blinking away.
+  const lastPhaseRef = useRef<CameraFlowState['phase']>('closed');
+  if (state.phase !== 'closed') lastPhaseRef.current = state.phase;
+  const phase = state.phase === 'closed' ? lastPhaseRef.current : state.phase;
+  const reviewing = phase === 'review' || phase === 'saving';
+  const showCameraControls = phase !== 'review' && phase !== 'saving';
   const lightAvailable = facing === 'back';
   const lightLabel = light === 'on' ? (de ? 'An' : 'On') : light === 'auto' ? 'Auto' : (de ? 'Aus' : 'Off');
   const noticeText = state.notice === 'capture' ? (de ? 'Foto konnte nicht aufgenommen werden. Versuche es erneut.' : 'Couldn’t take the photo. Try again.')
@@ -377,7 +399,7 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
       <Animated.View accessibilityViewIsModal={open} style={[{ position: 'absolute', overflow: 'hidden', backgroundColor: '#000000' }, sheetStyle]}>
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0, width, height: sheetHeight, overflow: 'hidden' }, previewStyle]}>
           {renderCamera ? <CameraView key={state.mountKey} ref={cameraRef} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} facing={facing} flash={lightAvailable && light === 'auto' ? 'auto' : 'off'} enableTorch={lightAvailable && light === 'on'} mode="picture" pictureSize={PICTURE_SIZE} animateShutter={false} mirror={false}
-            onCameraReady={() => dispatch({ type: 'ready', session: state.session, mountKey: state.mountKey })}
+            onCameraReady={() => onCameraReady(state.session, state.mountKey)}
             onMountError={() => dispatch({ type: 'mountError', session: state.session, mountKey: state.mountKey })} /> : null}
           <Animated.View style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, coverStyle]} />
           {shownPhoto ? <Image source={{ uri: shownPhoto.uri }} fadeDuration={0} resizeMode="cover" accessibilityLabel={de ? 'Aufgenommenes Foto' : 'Captured photo'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
@@ -386,14 +408,14 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
         {ghost && ghostSize ? <Animated.View pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[{ position: 'absolute', left: 0, top: 0, width: ghostSize.width, height: ghostSize.height }, ghostStyle]}>{ghost}</Animated.View> : null}
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#FFFFFF' }, flashStyle]} />
 
-        {state.phase === 'denied' || state.phase === 'error' ? <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 32, right: 32, top: 0, bottom: controlCenter + SHUTTER_SIZE / 2, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name={state.phase === 'denied' ? 'camera-off' : 'alert-circle'} size={26} color={HUD.muted} />
-          <Text style={{ marginTop: 14, color: HUD.text, fontFamily: 'Inter_600SemiBold', fontSize: 17, lineHeight: 23, textAlign: 'center' }}>{state.phase === 'denied' ? (de ? 'Kamerazugriff ist aus' : 'Camera access is off') : (de ? 'Die Kamera konnte nicht starten' : 'The camera couldn’t start')}</Text>
-          <Text style={{ marginTop: 6, color: HUD.muted, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20, textAlign: 'center' }}>{state.phase === 'denied'
+        {phase === 'denied' || phase === 'error' ? <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 32, right: 32, top: 0, bottom: controlCenter + SHUTTER_SIZE / 2, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name={phase === 'denied' ? 'camera-off' : 'alert-circle'} size={26} color={HUD.muted} />
+          <Text style={{ marginTop: 14, color: HUD.text, fontFamily: 'Inter_600SemiBold', fontSize: 17, lineHeight: 23, textAlign: 'center' }}>{phase === 'denied' ? (de ? 'Kamerazugriff ist aus' : 'Camera access is off') : (de ? 'Die Kamera konnte nicht starten' : 'The camera couldn’t start')}</Text>
+          <Text style={{ marginTop: 6, color: HUD.muted, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20, textAlign: 'center' }}>{phase === 'denied'
             ? (state.permission === 'blocked' ? (de ? 'Erlaube den Kamerazugriff in den Einstellungen, um ein Foto an Daimon zu senden.' : 'Allow camera access in Settings to send Daimon a photo.') : (de ? 'Daimon braucht Zugriff auf die Kamera, um ein Foto aufzunehmen.' : 'Daimon needs camera access to take a photo.'))
             : (de ? 'Eine andere App nutzt sie vielleicht gerade.' : 'Another app may be using it.')}</Text>
-          <View style={{ marginTop: 18 }}>{pill(state.phase === 'error' ? (de ? 'Erneut versuchen' : 'Try again') : state.permission === 'blocked' ? (de ? 'Einstellungen öffnen' : 'Open Settings') : (de ? 'Kamera erlauben' : 'Allow camera'), () => {
-            if (state.phase === 'error') dispatch({ type: 'retry' });
+          <View style={{ marginTop: 18 }}>{pill(phase === 'error' ? (de ? 'Erneut versuchen' : 'Try again') : state.permission === 'blocked' ? (de ? 'Einstellungen öffnen' : 'Open Settings') : (de ? 'Kamera erlauben' : 'Allow camera'), () => {
+            if (phase === 'error') dispatch({ type: 'retry' });
             else if (state.permission === 'blocked') void Linking.openSettings().catch(() => undefined);
             else void checkPermission(state.session, true);
           }, true)}</View>
@@ -402,11 +424,11 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
         {noticeText ? <View pointerEvents="none" accessibilityLiveRegion="polite" style={{ position: 'absolute', top: 18, left: 24, right: 24, alignItems: 'center' }}><View style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 16, backgroundColor: 'rgba(24,24,24,0.86)' }}><Text style={{ color: HUD.text, fontFamily: 'Inter_500Medium', fontSize: 13, textAlign: 'center' }}>{noticeText}</Text></View></View> : null}
 
         <Animated.View pointerEvents={open ? 'box-none' : 'none'} style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }, controlsStyle]}>
-          {state.phase === 'camera' ? <Pressable onPress={onPreviewPress} accessible={false} importantForAccessibility="no" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
-          {focusPoint && state.phase === 'camera' ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: focusPoint.x - FOCUS_RING / 2, top: focusPoint.y - FOCUS_RING / 2, width: FOCUS_RING, height: FOCUS_RING, borderRadius: FOCUS_RING / 2, borderWidth: 1.5, borderColor: '#FFFFFF' }, ringStyle]} /> : null}
+          {phase === 'camera' ? <Pressable onPress={onPreviewPress} accessible={false} importantForAccessibility="no" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
+          {focusPoint && phase === 'camera' ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: focusPoint.x - FOCUS_RING / 2, top: focusPoint.y - FOCUS_RING / 2, width: FOCUS_RING, height: FOCUS_RING, borderRadius: FOCUS_RING / 2, borderWidth: 1.5, borderColor: '#FFFFFF' }, ringStyle]} /> : null}
           {showCameraControls ? <>
             <View style={{ position: 'absolute', left: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 }}>{roundButton(de ? 'Kamera schließen' : 'Close camera', backOut, <Feather name="chevron-left" size={26} color={HUD.text} style={{ marginLeft: -2 }} />)}</View>
-            {state.phase !== 'denied' && state.phase !== 'error' ? <Pressable onPress={() => void capture()} disabled={!canCapture(state)} accessibilityRole="button" accessibilityLabel={de ? 'Foto aufnehmen' : 'Take photo'} accessibilityState={{ disabled: !canCapture(state), busy: state.capturing }} style={{ position: 'absolute', left: '50%', marginLeft: -SHUTTER_SIZE / 2, bottom: controlCenter - SHUTTER_SIZE / 2, width: SHUTTER_SIZE, height: SHUTTER_SIZE, alignItems: 'center', justifyContent: 'center' }}>
+            {phase !== 'denied' && phase !== 'error' ? <Pressable onPress={() => void capture()} disabled={!canCapture(state)} accessibilityRole="button" accessibilityLabel={de ? 'Foto aufnehmen' : 'Take photo'} accessibilityState={{ disabled: !canCapture(state), busy: state.capturing }} style={{ position: 'absolute', left: '50%', marginLeft: -SHUTTER_SIZE / 2, bottom: controlCenter - SHUTTER_SIZE / 2, width: SHUTTER_SIZE, height: SHUTTER_SIZE, alignItems: 'center', justifyContent: 'center' }}>
               {({ pressed }) => <>
                 <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0, width: SHUTTER_SIZE, height: SHUTTER_SIZE, borderRadius: SHUTTER_SIZE / 2, borderWidth: (SHUTTER_SIZE - SHUTTER_FILL) / 2, borderColor: HUD.ring }, chipStyle]} />
                 <Animated.View style={[{ width: SHUTTER_FILL, height: SHUTTER_FILL, borderRadius: SHUTTER_FILL / 2, alignItems: 'center', justifyContent: 'center', transform: [{ scale: pressed || state.capturing ? 0.9 : 1 }] }, shutterFillStyle]}>
@@ -414,7 +436,7 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
                 </Animated.View>
               </>}
             </Pressable> : null}
-            {state.phase === 'camera' ? <>
+            {phase === 'camera' ? <>
               <Animated.View pointerEvents={optionsOpen ? 'auto' : 'none'} style={[{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 + STACK_GAP * 2 }, lightStyle]}>
                 {roundButton(`${de ? 'Blitz' : 'Flash'}: ${lightLabel}`, cycleLight, <>
                   <Feather name={light === 'off' ? 'zap-off' : 'zap'} size={19} color={HUD.text} />
@@ -433,11 +455,11 @@ export const CameraSheet = forwardRef<CameraSheetHandle, Props>(function CameraS
             </> : null}
           </> : null}
           {reviewing ? <View style={{ position: 'absolute', left: 20, right: 20, bottom: controlCenter - 24, flexDirection: 'row', justifyContent: 'space-between' }}>
-            {pill(de ? 'Neu aufnehmen' : 'Retake', retake, false, false, state.phase === 'saving')}
-            {pill(de ? 'Foto verwenden' : 'Use photo', () => void accept(), true, state.phase === 'saving')}
+            {pill(de ? 'Neu aufnehmen' : 'Retake', retake, false, false, phase === 'saving')}
+            {pill(de ? 'Foto verwenden' : 'Use photo', () => void accept(), true, phase === 'saving')}
           </View> : null}
         </Animated.View>
       </Animated.View>
     </> : null}
   </View>;
-});
+}));

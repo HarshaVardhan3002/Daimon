@@ -8,8 +8,8 @@ public class DaimonCameraModule: Module {
     Name("DaimonCamera")
 
     // The iOS preview is an AVCaptureVideoPreviewLayer, which already clips, fades and scales with its view.
-    AsyncFunction("preferTexturePreview") { () -> Bool in
-      return true
+    AsyncFunction("preferTexturePreview") { () -> String in
+      return "texture"
     }
 
     // x and y are fractions of the portrait viewfinder (0...1, top-left origin).
