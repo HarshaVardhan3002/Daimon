@@ -1,0 +1,28 @@
+# Fresh install, camera permission not yet decided: attachment menu -> Camera -> system prompt -> Don't Allow.
+appId: ${APP_ID}
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Add attachment"
+    timeout: 60000
+- takeScreenshot: ios-01-home
+- tapOn: "Add attachment"
+- waitForAnimationToEnd
+- takeScreenshot: ios-02-attachment-menu
+- tapOn: "Camera"
+- takeScreenshot: ios-03-camera-entry
+- extendedWaitUntil:
+    visible: "Don.t Allow"
+    timeout: 15000
+- takeScreenshot: ios-04-permission-prompt
+- tapOn: "Don.t Allow"
+- extendedWaitUntil:
+    visible: "Camera access is off"
+    timeout: 15000
+- assertVisible: "Open Settings"
+- takeScreenshot: ios-05-permission-denied
+- tapOn: "Close camera"
+- waitForAnimationToEnd
+- assertVisible: "Photos"
+- takeScreenshot: ios-06-back-to-menu

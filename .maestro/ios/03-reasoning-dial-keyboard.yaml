@@ -1,0 +1,19 @@
+# Reasoning dial over the keyboard: type a draft, open the dial, close it, draft and keyboard intact.
+appId: ${APP_ID}
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Add attachment"
+    timeout: 60000
+- tapOn: "Message Daimon"
+- inputText: "dial check"
+- waitForAnimationToEnd
+- takeScreenshot: ios-11-keyboard-draft
+- tapOn: "Thinking dial.*"
+- waitForAnimationToEnd
+- takeScreenshot: ios-12-dial-open
+- tapOn: "Close reasoning effort"
+- waitForAnimationToEnd
+- assertVisible: "dial check"
+- takeScreenshot: ios-13-dial-closed

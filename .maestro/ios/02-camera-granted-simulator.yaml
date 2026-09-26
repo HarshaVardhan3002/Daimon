@@ -1,0 +1,38 @@
+# Permission granted ahead of launch. The Simulator has no camera, so the sheet must reach its
+# "couldn't start" fallback instead of hanging. Also guards that collapsed options stay out of VoiceOver.
+appId: ${APP_ID}
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Add attachment"
+    timeout: 60000
+- tapOn: "Add attachment"
+- waitForAnimationToEnd
+- tapOn: "Camera"
+- takeScreenshot: ios-07-camera-granted
+# Only reachable while the camera is still starting (before the fallback replaces the controls).
+- runFlow:
+    when:
+      visible: "Camera options"
+    commands:
+      - assertNotVisible: "Flash.*"
+      - assertNotVisible: "Switch camera"
+      - tapOn: "Camera options"
+      - waitForAnimationToEnd
+      - assertVisible: "Flash.*"
+      - assertVisible: "Switch camera"
+      - assertVisible: "Hide camera options"
+      - takeScreenshot: ios-08-options-stack
+      - tapOn: "Hide camera options"
+      - waitForAnimationToEnd
+      - assertNotVisible: "Switch camera"
+- extendedWaitUntil:
+    visible: "The camera couldn.t start"
+    timeout: 20000
+- assertVisible: "Try again"
+- takeScreenshot: ios-09-simulator-fallback
+- tapOn: "Close camera"
+- waitForAnimationToEnd
+- assertVisible: "Photos"
+- takeScreenshot: ios-10-back-to-menu

@@ -101,6 +101,46 @@ jobs:
           xcrun simctl spawn "$DEVICE_ID" log show --style compact --last 3m --predicate "process == \"$EXECUTABLE\"" > artifacts/app.log
           test -s artifacts/daimon-ios-simulator.png
 
+      - name: Set up Java for Maestro
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Maestro
+        shell: bash
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # Maestro drives the app through XCUITest on the simulator. Screenshots land in artifacts/ui.
+      - name: Drive the UI (camera permission, simulator fallback, reasoning dial)
+        shell: bash
+        run: |
+          APP_PATH="$(find "$RUNNER_TEMP/DaimonDerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          DEVICE_ID="${{ steps.simulator.outputs.device_id }}"
+          FLOWS="$GITHUB_WORKSPACE/.maestro/ios"
+          mkdir -p artifacts/ui && cd artifacts/ui
+          run_flow() {
+            maestro --device "$DEVICE_ID" test -e APP_ID="$BUNDLE_ID" --test-output-dir "maestro-$1" "$FLOWS/$1.yaml" 2>&1 | tee "maestro-$1.log"
+            return "${PIPESTATUS[0]}"
+          }
+          xcrun simctl io "$DEVICE_ID" recordVideo --codec=h264 daimon-ui-flows.mp4 > recording.log 2>&1 &
+          VIDEO_PID=$!
+          STATUS=0
+          xcrun simctl privacy "$DEVICE_ID" reset camera "$BUNDLE_ID" || true
+          run_flow 01-camera-permission-denied || STATUS=1
+          xcrun simctl privacy "$DEVICE_ID" grant camera "$BUNDLE_ID"
+          run_flow 02-camera-granted-simulator || STATUS=1
+          run_flow 03-reasoning-dial-keyboard || STATUS=1
+          kill -INT "$VIDEO_PID" 2>/dev/null || true
+          wait "$VIDEO_PID" || true
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")"
+          xcrun simctl spawn "$DEVICE_ID" log show --style compact --last 10m --predicate "process == \"$EXECUTABLE\"" > app-ui.log || true
+          ls -la
+          exit "$STATUS"
+
       - name: Upload simulator screenshot and logs
         if: always()
         uses: actions/upload-artifact@v7

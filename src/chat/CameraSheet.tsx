@@ -359,6 +359,8 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
   // Options slide up out of the ⋮ button, which turns into ×.
   // Each style reads `options` itself: Reanimated only re-runs a style for shared values read directly in its worklet.
   const stackStyle = (value: number, slot: number) => { 'worklet'; return { opacity: value, transform: [{ translateY: (1 - value) * STACK_GAP * slot }, { scale: 0.7 + value * 0.3 }] }; };
+  // Collapsed options sit transparent behind the X; keep them out of VoiceOver/TalkBack until the stack is open.
+  const stackA11y = { accessibilityElementsHidden: !optionsOpen, importantForAccessibility: optionsOpen ? 'auto' as const : 'no-hide-descendants' as const };
   const lightStyle = useAnimatedStyle(() => stackStyle(options.value, 2));
   const flipStyle = useAnimatedStyle(() => stackStyle(options.value, 1));
   const flipIconStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${flipTurn.value}deg` }] }));
@@ -405,7 +407,7 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
           {shownPhoto ? <Image source={{ uri: shownPhoto.uri }} fadeDuration={0} resizeMode="cover" accessibilityLabel={de ? 'Aufgenommenes Foto' : 'Captured photo'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} /> : null}
         </Animated.View>
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: palette.surface }, veilStyle]} />
-        {ghost && ghostSize ? <Animated.View pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[{ position: 'absolute', left: 0, top: 0, width: ghostSize.width, height: ghostSize.height }, ghostStyle]}>{ghost}</Animated.View> : null}
+        {ghost && ghostSize ? <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[{ position: 'absolute', left: 0, top: 0, width: ghostSize.width, height: ghostSize.height }, ghostStyle]}>{ghost}</Animated.View> : null}
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#FFFFFF' }, flashStyle]} />
 
         {phase === 'denied' || phase === 'error' ? <View accessibilityLiveRegion="polite" style={{ position: 'absolute', left: 32, right: 32, top: 0, bottom: controlCenter + SHUTTER_SIZE / 2, alignItems: 'center', justifyContent: 'center' }}>
@@ -437,13 +439,13 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
               </>}
             </Pressable> : null}
             {phase === 'camera' ? <>
-              <Animated.View pointerEvents={optionsOpen ? 'auto' : 'none'} style={[{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 + STACK_GAP * 2 }, lightStyle]}>
+              <Animated.View pointerEvents={optionsOpen ? 'auto' : 'none'} {...stackA11y} style={[{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 + STACK_GAP * 2 }, lightStyle]}>
                 {roundButton(`${de ? 'Blitz' : 'Flash'}: ${lightLabel}`, cycleLight, <>
                   <Feather name={light === 'off' ? 'zap-off' : 'zap'} size={19} color={HUD.text} />
                   {light === 'auto' ? <Text style={{ position: 'absolute', right: 9, bottom: 8, color: HUD.text, fontFamily: 'Inter_600SemiBold', fontSize: 9 }}>A</Text> : null}
                 </>, { disabled: !lightAvailable })}
               </Animated.View>
-              <Animated.View pointerEvents={optionsOpen ? 'auto' : 'none'} style={[{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 + STACK_GAP }, flipStyle]}>
+              <Animated.View pointerEvents={optionsOpen ? 'auto' : 'none'} {...stackA11y} style={[{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 + STACK_GAP }, flipStyle]}>
                 {roundButton(de ? 'Kamera wechseln' : 'Switch camera', switchCamera, <Animated.View style={flipIconStyle}><Feather name="refresh-cw" size={19} color={HUD.text} /></Animated.View>)}
               </Animated.View>
               <View style={{ position: 'absolute', right: SIDE_INSET, bottom: controlCenter - SIDE_BUTTON / 2 }}>
