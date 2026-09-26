@@ -19,6 +19,8 @@ import { QuizCard } from '../src/chat/QuizCard';
 import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
 import { ReasoningGauge } from '../src/chat/ReasoningGauge';
 import { GeneratedImage } from '../src/chat/GeneratedImage';
+import { CameraSheet, type CameraSheetHandle, type CameraSheetRect } from '../src/chat/CameraSheet';
+import type { CapturedPhoto } from '../src/chat/cameraFlow';
 import { persistRichReply } from '../src/chat/richReply';
 import { validateQuizCardData } from '../src/chat/quizCardData';
 import { imageAttachmentDataUri, isSupportedImage, persistImageAttachment, type ImageAttachment } from '../src/chat/imageAttachment';
@@ -31,6 +33,8 @@ import { updateTurnList } from '../src/state/turns';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
 const ATTACHMENT_MENU_HEIGHT = 214;
+const ATTACHMENT_MENU_WIDTH = 255;
+const HEADER_HEIGHT = 56;
 const keyboardScrim = NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined;
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
@@ -67,6 +71,10 @@ export default function HomeScreen() {
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
   const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
+  const [cameraOpen, setCameraOpen] = useState(false); const [cameraLayerVisible, setCameraLayerVisible] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null);
+  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false);
+  // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
+  const attachmentCameraHandoff = useSharedValue(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
 
@@ -102,6 +110,24 @@ export default function HomeScreen() {
       });
     });
   }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentTargetTop, reducedMotion]);
+
+  const finishCameraHandoff = useCallback(() => {
+    attachmentMenuProgress.value = 0;
+    attachmentCameraHandoff.value = 0;
+    setAttachmentMenuVisible(false);
+  }, [attachmentCameraHandoff, attachmentMenuProgress]);
+  const openCamera = useCallback(() => {
+    const fromMenu = attachmentMenuVisible;
+    Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
+    setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
+    cameraOpenRef.current = true; setCameraLayerVisible(true); setCameraOpen(true);
+    if (!fromMenu) return;
+    // The sheet grows out of the menu card; fade the menu underneath instead of shrinking it back into the plus.
+    setAttachmentSheetOpen(false); setAttachmentMenuInteractive(false);
+    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 380 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
+  }, [attachmentCameraHandoff, attachmentMenuVisible, attachmentTargetTop, finishCameraHandoff, reducedMotion]);
+  const closeCamera = useCallback(() => { cameraOpenRef.current = false; setCameraOpen(false); }, []);
+  const cameraExited = useCallback(() => { if (!cameraOpenRef.current) setCameraLayerVisible(false); }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -177,6 +203,7 @@ export default function HomeScreen() {
   useEffect(() => { drawerProgress.value = withTiming(drawerOpen ? 1 : 0, { duration: reducedMotion ? 1 : drawerOpen ? 240 : 190, easing: Easing.out(Easing.cubic) }); }, [drawerOpen, reducedMotion, drawerProgress]);
   useFocusEffect(useCallback(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (cameraOpen) return cameraSheetRef.current?.handleBack() ?? true;
       if (reasoningDialOpen) { closeReasoningDial(); return true; }
       if (attachmentSheetOpen || attachmentMenuVisible) { closeAttachmentMenu(); return true; }
       if (drawerOpen) { setDrawerOpen(false); Keyboard.dismiss(); return true; }
@@ -185,7 +212,7 @@ export default function HomeScreen() {
       return false;
     });
     return () => sub.remove();
-  }, [reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
+  }, [cameraOpen, reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
 
   const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
   const runChatRequest = useCallback(async (request: PendingChatRequest) => {
@@ -336,7 +363,7 @@ export default function HomeScreen() {
   const rootStyle = useMemo(() => ({ flex: 1, backgroundColor: c.canvas }), [c.canvas]);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: drawerProgress.value * 0.38 }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(drawerProgress.value, [0, 1], [-drawerWidth, 0]) }] }));
-  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 }));
+  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 * (1 - attachmentCameraHandoff.value) }));
   const attachmentCardStyle = useAnimatedStyle(() => ({
     left: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginLeft.value, 22]),
     top: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginTop.value, attachmentTargetTop.value]),
@@ -344,16 +371,17 @@ export default function HomeScreen() {
     height: interpolate(attachmentMenuProgress.value, [0, 1], [44, ATTACHMENT_MENU_HEIGHT]),
     borderRadius: 22,
     backgroundColor: c.surface,
-    shadowOpacity: attachmentMenuProgress.value * 0.28,
+    shadowOpacity: attachmentMenuProgress.value * 0.28 * (1 - attachmentCameraHandoff.value),
+    opacity: interpolate(attachmentCameraHandoff.value, [0.3, 0.6], [1, 0], Extrapolation.CLAMP),
   }));
   const attachmentPlusStyle = useAnimatedStyle(() => ({
     opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
   }));
   const attachmentContentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP),
+    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP) * interpolate(attachmentCameraHandoff.value, [0, 0.35], [1, 0], Extrapolation.CLAMP),
     transform: [{ translateY: interpolate(attachmentMenuProgress.value, [0, 1], [10, 0]) }],
   }));
-  const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen), [drawerOpen, gestureStartX, openDrawer]);
+  const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen && !cameraOpen), [cameraOpen, drawerOpen, gestureStartX, openDrawer]);
   const drawerGesture = useMemo(() => Gesture.Pan().activeOffsetX(-12).failOffsetY([-10, 10]).onEnd(event => { if (event.translationX < -48) runOnJS(closeDrawer)(); }).enabled(drawerOpen), [closeDrawer, drawerOpen]);
 
   const retryableRequestForTurn = (turnId: string) => {
@@ -363,17 +391,11 @@ export default function HomeScreen() {
     return stored?.error?.startsWith('document_') ? undefined : stored;
   };
 
-  const chooseAttachment = useCallback(async (kind: 'camera' | 'photos' | 'files') => {
+  const chooseAttachment = useCallback(async (kind: 'photos' | 'files') => {
     closeAttachmentMenu();
     try {
       let uri = ''; let name = ''; let mimeType: string | null | undefined; let width = 0; let height = 0; let sizeBytes: number | null | undefined;
-      if (kind === 'camera') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) { showNotice(locale === 'de' ? 'Kamerazugriff wurde nicht erlaubt' : 'Camera access was not allowed'); return; }
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-        if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'camera.jpg'; mimeType = asset.mimeType; width = asset.width; height = asset.height;
-      } else if (kind === 'photos') {
+      if (kind === 'photos') {
         const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
         if (result.canceled || !result.assets?.[0]) return;
         const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'photo'; mimeType = asset.mimeType; width = asset.width; height = asset.height;
@@ -401,6 +423,11 @@ export default function HomeScreen() {
         : (locale === 'de' ? 'Bild konnte nicht hinzugefügt werden' : 'Could not attach that image'));
     }
   }, [closeAttachmentMenu, locale, setActiveSession, setDocumentAttachment, setImageAttachment, showNotice]);
+  /** Throws so the camera sheet can keep the photo in review and offer another try. */
+  const attachCapturedPhoto = useCallback(async (photo: CapturedPhoto) => {
+    const attachment = await persistImageAttachment(photo.uri, 'camera.jpg', photo.width, photo.height);
+    setDocumentAttachment(undefined); setImageAttachment(attachment);
+  }, [setDocumentAttachment, setImageAttachment]);
   const removeImageAttachment = useCallback(() => setImageAttachment(undefined), [setImageAttachment]);
   const removeDocumentAttachment = useCallback(() => setDocumentAttachment(undefined), [setDocumentAttachment]);
   const forgetDocumentContext = useCallback(() => setActiveSession(current => ({ ...current, activeDocumentContext: undefined })), [setActiveSession]);
@@ -449,9 +476,9 @@ export default function HomeScreen() {
 
   return <GestureDetector gesture={edgeGesture}><SafeAreaView style={rootStyle} edges={['top', 'left', 'right']}>
     <View ref={dialOverlayBoundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0} accessibilityElementsHidden={cameraOpen} importantForAccessibility={cameraOpen ? 'no-hide-descendants' : 'auto'}>
         <View ref={attachmentBoundsRef} style={{ flex: 1 }}>
-          <View style={{ height: 56, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ height: HEADER_HEIGHT, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={openDrawer} accessibilityRole="button" accessibilityLabel={t.menu} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="menu" size={20} color={c.text} /></Pressable>
             <View style={{ flex: 1 }} />
             <Pressable onPress={() => setChatActionsOpen(value => !value)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen' : 'Chat actions'} accessibilityState={{ expanded: chatActionsOpen }} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="more-vertical" size={20} color={c.text} /></Pressable>
@@ -510,7 +537,8 @@ export default function HomeScreen() {
                     { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
                     { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
                   ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => {
-                    void chooseAttachment(item.key);
+                    if (item.key === 'camera') openCamera();
+                    else void chooseAttachment(item.key);
                   }} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
                     <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
                     <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
@@ -521,6 +549,7 @@ export default function HomeScreen() {
           </View> : null}
         </View>
       </KeyboardAvoidingView>
+      {cameraLayerVisible ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} locale={locale} palette={{ surface: c.surface, canvas: c.canvas }} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onExited={cameraExited} onAccept={attachCapturedPhoto} /> : null}
     </View>
 
     {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
