@@ -2,6 +2,8 @@ import * as Clipboard from 'expo-clipboard';
 import * as Speech from 'expo-speech';
 import { Share } from 'react-native';
 import { strings } from '../i18n/strings';
+import { previewLesson } from '../dev/fixtures';
+import { accountStore } from '../state/accountStore';
 import { appStore, setActiveSession, setConversation, setDocumentAttachment, setDraft, setImageAttachment } from '../state/appStore';
 import { buildChatContext, documentContextAfterSuccess, documentRequestForPrompt } from '../state/chatHistory';
 import { beginChatSend, completePendingTurn, failPendingTurn, forgetRetryableRequest, rememberRetryableRequest, updatePendingTurn } from '../state/chatRequestFlow';
@@ -13,6 +15,7 @@ import { DocumentAttachmentError, documentAttachmentPayload } from './documentAt
 import { imageNeedsDefault } from './errorText';
 import { imageAttachmentDataUri } from './imageAttachment';
 import { ChatClientError, sendChatCompletion } from './modelClient';
+import type { ChatCompletion } from './modelClient';
 import { reasoningEffortForMode } from './reasoningEffort';
 import { persistRichReply } from './richReply';
 import { track, wordCount } from '../telemetry/telemetry';
@@ -94,12 +97,16 @@ async function run(request: PendingChatRequest): Promise<void> {
   const requestDocument = request.documentAttachment ?? request.documentContextAttachment;
   try {
     const last = request.messages[request.messages.length - 1];
-    const messages = requestDocument
+    // Explicit dev fixture bypasses model and attachment processing altogether.
+    const demo = accountStore.get().dev.previewFixtures && request.prompt === 'lesson demo';
+    const messages = demo ? request.messages : requestDocument
       ? [...request.messages.slice(0, -1), { ...last, document: await documentAttachmentPayload(requestDocument) }]
       : request.attachment
         ? [...request.messages.slice(0, -1), { ...last, image: await imageAttachmentDataUri(request.attachment) }]
         : request.messages;
-    const result = await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) });
+    const result: ChatCompletion = demo
+      ? { message: { role: 'assistant', content: strings[request.locale].lesson.previewIntro, rich: { type: 'lesson', deck: previewLesson(request.locale) } }, model: 'preview', usage: null, finishReason: 'stop' }
+      : await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) });
     const id = request.pendingTurnId ?? newTurnId();
     const rich = result.message.rich ? await persistRichReply(result.message.rich, id) : undefined;
     const original = appStore.get().conversation.find(item => item.id === id);

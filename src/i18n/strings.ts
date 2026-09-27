@@ -32,6 +32,18 @@ const en = {
   dictationPreview: 'Dictation preview · not transcribing yet', cancelDictation: 'Cancel dictation', stopDictation: 'Stop dictation', dictationUnavailable: 'Dictation isn’t connected yet',
   // Loading / errors
   loadingChats: 'Loading saved chats …', loadFailedTitle: 'Saved data could not be loaded', loadFailedBody: 'Stored data has not been replaced. Try loading it again.', tryAgain: 'Try again',
+  lesson: {
+    next: 'Next', finish: 'Finish deck', score: (correct: number, total: number) => `${correct} of ${total}`,
+    more: 'More like this', less: 'Less like this', reviewMissed: 'Review missed', reviewDone: 'Finish review',
+    completed: 'Completed', cardPosition: (index: number, total: number) => `Card ${index} of ${total}`,
+    deckFinished: 'Lesson complete', previewIntro: 'A short lesson about black holes',
+    flipHint: 'Tap to turn over', knewIt: 'Knew it', notYet: 'Not yet',
+    howSure: 'How sure are you?', guess: 'Guess', thinkSo: 'Think so', sure: 'Sure',
+    true: 'True', false: 'False', chooseAnswer: 'Choose an answer', blank: 'blank', option: (index: number) => `Option ${index}`,
+    showOrder: 'Show order', yourOrder: 'Your order', addStep: 'Add step', matchLeft: 'Choose an item', matchRight: 'Choose its match',
+    correct: 'Correct', notQuite: 'Not quite', reveal: 'Show answer',
+    kind: { idea: 'Idea', flip: 'Recall', mcq: 'Multiple choice', swipe: 'True or false', cloze: 'Fill the blank', order: 'Order', match: 'Match' },
+  },
 };
 
 export type Strings = typeof en;
@@ -61,6 +73,18 @@ const de: Strings = {
   searchChats: 'Chats durchsuchen', recents: 'Zuletzt', noChats: 'Noch keine Chats', chat: 'Chat', profile: 'Profil und Einstellungen', today: 'Heute', yesterday: 'Gestern', previous7: 'Letzte 7 Tage', older: 'Älter',
   dictationPreview: 'Diktiervorschau · noch keine Transkription', cancelDictation: 'Diktieren abbrechen', stopDictation: 'Diktieren beenden', dictationUnavailable: 'Diktieren ist noch nicht verbunden',
   loadingChats: 'Gespeicherte Chats werden geladen …', loadFailedTitle: 'Gespeicherte Daten konnten nicht geladen werden', loadFailedBody: 'Die gespeicherten Daten wurden nicht ersetzt. Versuche, sie erneut zu laden.', tryAgain: 'Erneut versuchen',
+  lesson: {
+    next: 'Weiter', finish: 'Lektion beenden', score: (correct: number, total: number) => `${correct} von ${total}`,
+    more: 'Mehr davon', less: 'Weniger davon', reviewMissed: 'Falsche Karten wiederholen', reviewDone: 'Wiederholung beenden',
+    completed: 'Abgeschlossen', cardPosition: (index: number, total: number) => `Karte ${index} von ${total}`,
+    deckFinished: 'Lektion abgeschlossen', previewIntro: 'Eine kurze Lektion über Schwarze Löcher',
+    flipHint: 'Zum Umdrehen tippen', knewIt: 'Gewusst', notYet: 'Noch nicht',
+    howSure: 'Wie sicher bist du?', guess: 'Geraten', thinkSo: 'Ziemlich sicher', sure: 'Sicher',
+    true: 'Wahr', false: 'Falsch', chooseAnswer: 'Wähle eine Antwort', blank: 'Lücke', option: (index: number) => `Option ${index}`,
+    showOrder: 'Reihenfolge zeigen', yourOrder: 'Deine Reihenfolge', addStep: 'Schritt hinzufügen', matchLeft: 'Wähle einen Eintrag', matchRight: 'Wähle die passende Seite',
+    correct: 'Richtig', notQuite: 'Nicht ganz', reveal: 'Antwort zeigen',
+    kind: { idea: 'Idee', flip: 'Abruf', mcq: 'Auswahlfrage', swipe: 'Wahr oder falsch', cloze: 'Lückentext', order: 'Reihenfolge', match: 'Zuordnen' },
+  },
 };
 
 export const strings: Record<Locale, Strings> = { en, de };
