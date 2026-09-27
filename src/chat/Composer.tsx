@@ -1,6 +1,6 @@
 import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Image, Platform, Text, TextInput, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, LinearTransition, ZoomIn, ZoomOut, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, LinearTransition, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { font, motion, radius, type } from '../design/tokens';
 import { usePalette, useThemeMode } from '../design/useTheme';
 import { useStrings } from '../i18n/strings';
@@ -82,13 +82,13 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
     </Animated.View> : null}
     <Animated.View style={[{ backgroundColor: c.surface, borderRadius: radius.composer, overflow: 'hidden' }, containerStyle]}>
       {image || document ? <Animated.View layout={LinearTransition.duration(200)} style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>
-        {image ? <Animated.View entering={ZoomIn.springify().damping(16)} exiting={ZoomOut.duration(140)}>
+        {image ? <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(110)}>
           <Image source={{ uri: image.uri }} accessibilityLabel={t.imageInDraft} resizeMode="cover" style={{ width: 64, height: 64, borderRadius: 14 }} />
           <PressableScale onPress={() => setImageAttachment(undefined)} disabled={loading} accessibilityRole="button" accessibilityLabel={t.removeImage} hitSlop={10} style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: '#000000B3', alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="x" size={13} color="#FFFFFF" />
           </PressableScale>
         </Animated.View> : null}
-        {document ? <Animated.View entering={ZoomIn.springify().damping(16)} exiting={ZoomOut.duration(140)} style={{ flexShrink: 1, maxWidth: 260, height: 64, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 10, paddingRight: 34, borderRadius: 14, backgroundColor: c.raised }}>
+        {document ? <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(110)} style={{ flexShrink: 1, maxWidth: 260, height: 64, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 10, paddingRight: 34, borderRadius: 14, backgroundColor: c.raised }}>
           <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Icon name="file-text" size={19} color={c.onAccent} /></View>
           <View style={{ flexShrink: 1 }}>
             <Text numberOfLines={1} ellipsizeMode="middle" style={{ ...type.label, fontSize: 13, color: c.text }}>{document.name}</Text>
@@ -111,15 +111,15 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
             <Icon name="plus" size={23} color={c.text} />
           </IconButton>
           <View style={{ flex: 1 }} pointerEvents="none" />
-          {thinking ? <Animated.View entering={ZoomIn.springify().damping(15)} exiting={ZoomOut.duration(140)} layout={LinearTransition.springify().damping(20)}>
+          {thinking ? <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(110)} layout={LinearTransition.duration(180)}>
             <IconButton label={`${t.thinkingDial}: ${t.effortLabel[reasoningMode]}`} onPress={onOpenDial} onLongPress={() => { haptic('selection'); setReasoningMode('default'); }} accessibilityState={{ selected: true }} size={CONTROL}>
               <ReasoningGauge mode={reasoningMode} theme={mode} />
             </IconButton>
           </Animated.View> : null}
-          <Animated.View layout={LinearTransition.springify().damping(20)}>
+          <Animated.View layout={LinearTransition.duration(180)}>
             <IconButton label={t.dictate} onPress={() => { haptic('light'); setDictating(true); }} size={CONTROL}><Icon name="mic" size={20} color={c.text} /></IconButton>
           </Animated.View>
-          {loading || canSend ? <Animated.View key={loading ? 'stop' : 'send'} entering={ZoomIn.springify().damping(14).stiffness(260)} exiting={ZoomOut.duration(120)} style={{ marginLeft: 4 }}>
+          {loading || canSend ? <Animated.View key={loading ? 'stop' : 'send'} entering={FadeIn.duration(140)} exiting={FadeOut.duration(100)} style={{ marginLeft: 4 }}>
             {loading
               ? <IconButton label={t.stop} variant="inverse" size={36} onPress={stopRequest} haptic="light"><View style={{ width: 12, height: 12, borderRadius: 2.5, backgroundColor: c.canvas }} /></IconButton>
               : <IconButton label={t.send} variant="accent" size={36} onPress={send}><Icon name="arrow-up" size={20} color={c.onAccent} /></IconButton>}

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { cancelAnimation, Easing, FadeIn, FadeInDown, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, useReducedMotion } from 'react-native-reanimated';
 import { DaimonMark } from '../src/brand/DaimonMark';
 import { font, motion, type as textType } from '../src/design/tokens';
 import { usePalette } from '../src/design/useTheme';
@@ -18,10 +18,6 @@ export default function WelcomeScreen() {
   const locale = useApp(state => state.locale);
   const reducedMotion = useReducedMotion();
   const [typed, setTyped] = useState(reducedMotion ? t.welcome.phrases[0] : '');
-  const orbit = useSharedValue(0);
-  const starScale = useSharedValue(1);
-  const markScale = useSharedValue(reducedMotion ? 1 : 0.9);
-  const markStyle = useAnimatedStyle(() => ({ transform: [{ scale: markScale.value }] }));
 
   useEffect(() => {
     if (reducedMotion) {
@@ -40,46 +36,28 @@ export default function WelcomeScreen() {
         setTyped(phrase.slice(0, length));
         if (length >= phrase.length) {
           deleting = true;
-          timer = setTimeout(tick, 1600);
-        } else timer = setTimeout(tick, 38);
+          timer = setTimeout(tick, 2600);
+        } else timer = setTimeout(tick, 55);
       } else {
-        length = Math.max(0, length - 2);
+        length = Math.max(0, length - 1);
         setTyped(phrase.slice(0, length));
         if (length === 0) {
           deleting = false;
           index = (index + 1) % t.welcome.phrases.length;
-          timer = setTimeout(tick, 150);
-        } else timer = setTimeout(tick, 18);
+          timer = setTimeout(tick, 400);
+        } else timer = setTimeout(tick, 22);
       }
     };
-    timer = setTimeout(tick, 38);
+    // Calm pacing: an unhurried type, a long hold, a quick clear.
+    timer = setTimeout(tick, 450);
     return () => clearTimeout(timer);
   }, [reducedMotion, t.welcome.phrases]);
 
-  useEffect(() => {
-    if (reducedMotion) {
-      orbit.value = 0;
-      starScale.value = 1;
-      markScale.value = 1;
-      return;
-    }
-    orbit.value = withRepeat(withTiming(360, { duration: 14000, easing: Easing.linear }), -1, false);
-    starScale.value = withRepeat(withSequence(
-      withTiming(1.08, { duration: 1500, easing: motion.standard }),
-      withTiming(1, { duration: 1500, easing: motion.standard }),
-    ), -1, false);
-    markScale.value = withSpring(1, motion.spring);
-    return () => {
-      cancelAnimation(orbit);
-      cancelAnimation(starScale);
-      cancelAnimation(markScale);
-    };
-  }, [markScale, orbit, reducedMotion, starScale]);
-
   return <View style={{ flex: 1, backgroundColor: palette.canvas, paddingTop: insets.top + 12, paddingBottom: Math.max(insets.bottom, 18) + 12, paddingHorizontal: 28 }}>
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View entering={FadeIn.duration(motion.container).easing(motion.enter)} style={markStyle}>
-        <DaimonMark size={112} motion={{ orbit, starScale }} />
+      {/* The mark stays still here; motion is kept for moments that mean something. */}
+      <Animated.View entering={FadeIn.duration(motion.container).easing(motion.enter)}>
+        <DaimonMark size={112} />
       </Animated.View>
       <Animated.View entering={FadeInDown.delay(70).duration(motion.container).easing(motion.enter)} style={{ marginTop: 38, justifyContent: 'flex-start', alignSelf: 'stretch', position: 'relative' }}>
         <Text accessible={false} importantForAccessibility="no-hide-descendants" style={{ ...textType.display, fontSize: 30, lineHeight: 36, fontFamily: font.semibold, color: palette.text, textAlign: 'center', opacity: 0 }}>

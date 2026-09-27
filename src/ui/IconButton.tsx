@@ -19,7 +19,7 @@ export const IconButton = forwardRef<View, Props>(function IconButton({ size = 4
   const c = usePalette();
   const background = variant === 'surface' ? c.surface : variant === 'accent' ? c.accent : variant === 'inverse' ? c.text : 'transparent';
   const slop = hitSlop ?? Math.max(0, (HIT - size) / 2);
-  return <PressableScale ref={ref} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }} disabled={disabled} hitSlop={slop} scaleTo={0.9} highlight={variant === 'plain' ? c.raised : undefined} {...rest}
+  return <PressableScale ref={ref} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }} disabled={disabled} hitSlop={slop} scaleTo={0.94} highlight={variant === 'plain' ? c.raised : undefined} {...rest}
     style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: background, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.4 : 1 }, style]}>
     {children}
   </PressableScale>;

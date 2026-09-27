@@ -1,13 +1,12 @@
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
-import Animated, { Easing, ReduceMotion, runOnJS, useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, ReduceMotion, runOnJS, useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { DaimonMark } from './DaimonMark';
 
 /**
  * Takes over from the native splash on the same frame (same canvas, same mark, same place) from the first commit,
- * holds while the app loads, then spins the orbit once and zooms through into the app once `ready`. About half a
- * second; with reduced motion it only fades.
+ * holds while the app loads, then fades into the app once `ready` (about a third of a second).
  */
 // Native splash mark box: expo-splash-screen draws the 1024 px image 200 pt wide on iOS; the Android drawable is
 // 288 dp (864 px at xxhdpi).
@@ -18,7 +17,6 @@ export function SplashOverlay({ background, ready }: { background: string; ready
   const reduced = useReducedMotion();
   const [laidOut, setLaidOut] = useState(false);
   const started = useRef(false);
-  const orbit = useSharedValue(0); const star = useSharedValue(0); const ring = useSharedValue(1); const starScale = useSharedValue(1);
   const markScale = useSharedValue(1); const markOpacity = useSharedValue(1); const veil = useSharedValue(1);
   const finish = useCallback(() => setDone(true), []);
 
@@ -32,16 +30,13 @@ export function SplashOverlay({ background, ready }: { background: string; ready
         veil.value = withTiming(0, { duration: 200, reduceMotion: ReduceMotion.Never }, ok => { if (ok) runOnJS(finish)(); });
         return;
       }
-      const spin = Easing.bezier(0.6, 0, 0.2, 1);
-      orbit.value = withTiming(360, { duration: 560, easing: spin });
-      star.value = withTiming(-90, { duration: 520, easing: spin });
-      starScale.value = withSequence(withTiming(1.28, { duration: 200, easing: Easing.out(Easing.quad) }), withSpring(1, { damping: 12, stiffness: 240 }));
-      ring.value = withSequence(withTiming(1.1, { duration: 220 }), withTiming(0.96, { duration: 200 }));
-      markScale.value = withDelay(260, withTiming(1.9, { duration: 340, easing: Easing.in(Easing.cubic) }));
-      markOpacity.value = withDelay(300, withTiming(0, { duration: 260 }));
-      veil.value = withDelay(320, withTiming(0, { duration: 300, easing: Easing.out(Easing.quad) }, ok => { if (ok) runOnJS(finish)(); }));
+      // A quiet hand-off: the mark eases back a touch as it fades, then the canvas dissolves into the app.
+      const ease = Easing.out(Easing.cubic);
+      markScale.value = withTiming(0.96, { duration: 260, easing: ease });
+      markOpacity.value = withTiming(0, { duration: 220, easing: ease });
+      veil.value = withDelay(120, withTiming(0, { duration: 260, easing: ease }, ok => { if (ok) runOnJS(finish)(); }));
     });
-  }, [finish, markOpacity, markScale, orbit, reduced, ring, star, starScale, veil]);
+  }, [finish, markOpacity, markScale, reduced, veil]);
 
   useEffect(() => { if (ready && laidOut) start(); }, [laidOut, ready, start]);
 
@@ -51,7 +46,7 @@ export function SplashOverlay({ background, ready }: { background: string; ready
   return <View pointerEvents="none" style={{ position: 'absolute', inset: 0, zIndex: 2000, elevation: 40 }} onLayout={onLayout}>
     <Animated.View style={[{ position: 'absolute', inset: 0, backgroundColor: background }, veilStyle]} />
     <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View style={markStyle}><DaimonMark size={SPLASH_MARK_SIZE} motion={{ orbit, star, ring, starScale }} /></Animated.View>
+      <Animated.View style={markStyle}><DaimonMark size={SPLASH_MARK_SIZE} /></Animated.View>
     </View>
   </View>;
 }

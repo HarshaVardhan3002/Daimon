@@ -111,7 +111,7 @@ function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
   const alignRight = spec.align ? spec.align === 'right' : anchor.x + anchor.width / 2 > screenW / 2;
   const left = Math.max(MENU_MARGIN, Math.min(screenW - width - MENU_MARGIN, alignRight ? anchor.x + anchor.width - width : anchor.x));
   const origin = `${below ? 'top' : 'bottom'} ${alignRight ? 'right' : 'left'}`;
-  const panelStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.86 + 0.14 * progress.value }, { translateY: (below ? -6 : 6) * (1 - progress.value) }] }), [below]);
+  const panelStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.95 + 0.05 * progress.value }, { translateY: (below ? -3 : 3) * (1 - progress.value) }] }), [below]);
   const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value * (mode === 'dark' ? 0.45 : 0.2) }), [mode]);
   const onLayout = (event: LayoutChangeEvent) => { if (!size) setSize({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height }); };
 
@@ -201,8 +201,8 @@ function DialogView({ spec }: { spec: DialogSpec & { id: number } }) {
     progress.value = withTiming(0, { duration: 130 }, done => { if (done) runOnJS(finish)(); });
   }, [finish, progress, spec]);
   useEffect(() => { closers.dialog = () => settle(spec.kind === 'confirm' ? false : null); return () => { closers.dialog = undefined; }; }, [settle, spec.kind]);
-  useEffect(() => { progress.value = withSpring(1, motion.spring); if (spec.kind === 'confirm' && spec.destructive) haptic('warning'); }, [progress, spec]);
-  const cardStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, progress.value * 1.4), transform: [{ scale: 0.9 + 0.1 * progress.value }] }));
+  useEffect(() => { progress.value = withTiming(1, { duration: 180, easing: motion.enter }); if (spec.kind === 'confirm' && spec.destructive) haptic('warning'); }, [progress, spec]);
+  const cardStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, progress.value * 1.4), transform: [{ scale: 0.97 + 0.03 * progress.value }] }));
   const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value * (mode === 'dark' ? 0.6 : 0.35) }), [mode]);
   const cancel = () => settle(spec.kind === 'confirm' ? false : null);
   const accept = () => settle(spec.kind === 'confirm' ? true : text.trim() ? text : null);
@@ -233,10 +233,10 @@ function ToastView({ toast: current }: { toast: OverlayShape['toast'] }) {
   const progress = useSharedValue(0);
   const [shown, setShown] = useState(current);
   useEffect(() => {
-    if (current) { setShown(current); progress.value = withSpring(1, motion.spring); }
+    if (current) { setShown(current); progress.value = withTiming(1, { duration: 180, easing: motion.enter }); }
     else progress.value = withTiming(0, { duration: motion.exit });
   }, [current, progress]);
-  const style = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ translateY: (1 - progress.value) * 16 }, { scale: 0.94 + 0.06 * progress.value }] }));
+  const style = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ translateY: (1 - progress.value) * 6 }] }));
   if (!shown) return null;
   return <Animated.View pointerEvents="none" accessibilityLiveRegion="polite" style={[{ position: 'absolute', zIndex: 1100, elevation: 34, alignSelf: 'center', bottom: insets.bottom + 96, maxWidth: '86%', backgroundColor: c.text, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10 }, style]}>
     <Text style={{ ...type.label, fontSize: 14, color: c.canvas, textAlign: 'center' }}>{shown.message}</Text>

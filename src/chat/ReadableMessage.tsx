@@ -63,8 +63,8 @@ function MarkdownTable({ rows, palette }: { rows: string[][]; palette: Palette }
   </ScrollView>;
 }
 
-const REVEAL_STEP_MS = 55;
-const REVEAL_MAX_DELAY_MS = 550;
+const REVEAL_STEP_MS = 35;
+const REVEAL_MAX_DELAY_MS = 280;
 
 /**
  * Small native Markdown subset for model text; never renders HTML or WebView content.
@@ -82,6 +82,6 @@ export const ReadableMessage = memo(function ReadableMessage({ text, palette, re
     else content = <View style={{ marginBottom: 14 }}><InlineText text={block.text} color={palette.text} palette={palette} /></View>;
     if (!reveal) return <View key={index}>{content}</View>;
     const delay = Math.min(REVEAL_MAX_DELAY_MS, index * REVEAL_STEP_MS);
-    return <Animated.View key={index} entering={index === 0 ? FadeIn.duration(220) : FadeInDown.delay(delay).duration(300).withInitialValues({ transform: [{ translateY: 6 }] })}>{content}</Animated.View>;
+    return <Animated.View key={index} entering={index === 0 ? FadeIn.duration(220) : FadeInDown.delay(delay).duration(240).withInitialValues({ opacity: 0, transform: [{ translateY: 4 }] })}>{content}</Animated.View>;
   })}</View>;
 });

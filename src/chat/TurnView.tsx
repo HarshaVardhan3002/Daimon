@@ -1,9 +1,9 @@
 import * as Linking from 'expo-linking';
 import React, { memo, useCallback, useRef, useState } from 'react';
 import { Image, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeInUp, useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { previewSources, previewThinking } from '../dev/fixtures';
-import { motion, radius, type } from '../design/tokens';
+import { radius, type } from '../design/tokens';
 import { usePalette } from '../design/useTheme';
 import { formatWhen } from '../i18n/format';
 import { useStrings, type Strings } from '../i18n/strings';
@@ -41,11 +41,8 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
   const c = usePalette(); const t = useStrings();
   const locale = useApp(state => state.locale);
   const bubbleRef = useRef<View>(null);
-  const squeeze = useSharedValue(1);
-  const bubbleStyle = useAnimatedStyle(() => ({ transform: [{ scale: squeeze.value }] }));
   const openActions = useCallback(() => {
     haptic('medium');
-    squeeze.value = withSequence(withTiming(0.96, { duration: 90 }), withSpring(1, motion.bouncy));
     const when = turnTime(turn);
     openMenuFrom(bubbleRef.current, {
       header: when ? formatWhen(when, locale) : undefined, align: 'right',
@@ -57,15 +54,15 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
         { key: 'share', label: t.sharePrompt, icon: 'share-2', onPress: () => void shareText(turn.prompt) },
       ],
     });
-  }, [c.text, c.user, c.userText, locale, squeeze, t, turn]);
-  return <Animated.View entering={fresh ? FadeInDown.duration(260).withInitialValues({ opacity: 0, transform: [{ translateY: 18 }] }) : undefined} style={{ alignItems: 'flex-end', paddingHorizontal: GUTTER, paddingTop: 12, gap: 6 }}>
+  }, [c.text, c.user, c.userText, locale, t, turn]);
+  return <Animated.View entering={fresh ? FadeInDown.duration(220).withInitialValues({ opacity: 0, transform: [{ translateY: 8 }] }) : undefined} style={{ alignItems: 'flex-end', paddingHorizontal: GUTTER, paddingTop: 12, gap: 6 }}>
     {turn.imageAttachment ? <Image source={{ uri: turn.imageAttachment.uri }} accessibilityLabel={t.attachedImage} resizeMode="cover" style={{ width: 196, height: 148, borderRadius: 18 }} /> : null}
     {turn.documentAttachment ? <View accessible accessibilityLabel={turn.documentAttachment.name} style={{ maxWidth: '84%', flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18, backgroundColor: c.surface }}>
       <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Icon name="file-text" size={18} color={c.onAccent} /></View>
       <Text numberOfLines={1} ellipsizeMode="middle" style={{ ...type.label, fontSize: 14, color: c.text, flexShrink: 1 }}>{turn.documentAttachment.name}</Text>
     </View> : null}
     <PressableScale ref={bubbleRef} onLongPress={openActions} delayLongPress={320} scaleTo={1} accessibilityRole="text" accessibilityLabel={`${t.yourMessage}: ${turn.prompt}`} accessibilityActions={[{ name: 'longpress', label: t.more }]} onAccessibilityAction={openActions} style={{ maxWidth: '84%' }}>
-      <Animated.View style={bubbleStyle}><UserBubble prompt={turn.prompt} background={c.user} color={c.userText} /></Animated.View>
+      <UserBubble prompt={turn.prompt} background={c.user} color={c.userText} />
     </PressableScale>
   </Animated.View>;
 }

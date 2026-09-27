@@ -95,7 +95,6 @@ export const motion = {
   standard: Easing.bezier(0.2, 0, 0, 1),
   spring: { damping: 24, stiffness: 280, mass: 1 },
   snappy: { damping: 30, stiffness: 420, mass: 1 },
-  bouncy: { damping: 14, stiffness: 260, mass: 1 },
   /** Critically damped: sheets and the drawer settle without overshoot. */
   settle: { damping: 36, stiffness: 320, mass: 1, overshootClamping: true },
 } as const;

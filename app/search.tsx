@@ -2,9 +2,9 @@ import React, { memo, useCallback, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Animated, { FadeInDown, useAnimatedStyle } from 'react-native-reanimated';
+import Animated, { FadeIn, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { font, motion, radius, type } from '../src/design/tokens';
+import { font, radius, type } from '../src/design/tokens';
 import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useScreenStrings } from '../src/i18n/screens';
 import { closeDrawerBehind } from '../src/chat/chatController';
@@ -40,7 +40,7 @@ const ResultRow = memo(function ResultRow({ chat, index, query, onSelect }: { ch
   const snippet = query ? snippetFor(chat, query) : null;
   const turn = chat.turns[chat.turns.length - 1];
   const preview = compact(turn?.answer || turn?.prompt || '');
-  return <Animated.View entering={index < 12 ? FadeInDown.delay(index * 28).duration(230).easing(motion.enter) : undefined}>
+  return <Animated.View entering={FadeIn.duration(160)}>
     <PressableScale accessibilityRole="button" accessibilityLabel={t.search.openChat(chat.title)} onPress={() => onSelect(chat)} highlight={c.raised} scaleTo={0.98} style={{ width: '100%', minHeight: 72, borderRadius: radius.row, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 12 }}>
       <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><Icon name="message-circle" size={19} color={c.muted} /></View>
       <View style={{ flex: 1, minWidth: 0, paddingVertical: 10 }}>

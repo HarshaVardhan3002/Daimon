@@ -25,7 +25,7 @@ export type PressableScaleProps = Omit<PressableProps, 'style'> & {
 };
 
 /** Pressable with UI-thread press feedback: a quick shrink and optional highlight that spring back on release. */
-export const PressableScale = forwardRef<View, PressableScaleProps>(function PressableScale({ style, scaleTo = 0.96, highlight, haptic: hapticKind, onPressIn, onPressOut, onPress, disabled, ...rest }, ref) {
+export const PressableScale = forwardRef<View, PressableScaleProps>(function PressableScale({ style, scaleTo = 0.97, highlight, haptic: hapticKind, onPressIn, onPressOut, onPress, disabled, ...rest }, ref) {
   const pressed = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: 1 - (1 - scaleTo) * pressed.value }],

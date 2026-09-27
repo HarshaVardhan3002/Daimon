@@ -271,7 +271,7 @@ export default function ChatScreen() {
     const shown = atEnd.value ? 0 : 1;
     return {
       opacity: withTiming(shown, { duration: 160 }),
-      transform: [{ scale: withSpring(shown ? 1 : 0.6, motion.snappy) }],
+      transform: [{ scale: withTiming(shown ? 1 : 0.92, { duration: 160 }) }],
       bottom: composerHeight.value - keyboard.height.value - keyboard.progress.value * insets.bottom + 12,
     };
   }, [insets.bottom]);

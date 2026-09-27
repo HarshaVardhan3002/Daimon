@@ -15,7 +15,7 @@ export function Switch({ value, onValueChange, label, disabled }: { value: boole
     const size = 18 + progress.value * 6;
     return { width: size, height: size, borderRadius: size / 2, backgroundColor: interpolateColor(progress.value, [0, 1], [c.faint, c.canvas]), transform: [{ translateX: 5 + progress.value * 15 }] };
   }, [c]);
-  return <PressableScale accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} disabled={disabled} scaleTo={0.94} haptic="selection" onPress={() => onValueChange(!value)} hitSlop={8}>
+  return <PressableScale accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} disabled={disabled} scaleTo={0.97} haptic="selection" onPress={() => onValueChange(!value)} hitSlop={8}>
     <Animated.View style={[{ width: 52, height: 32, borderRadius: 16, borderWidth: 2, justifyContent: 'center', opacity: disabled ? 0.4 : 1 }, trackStyle]}>
       <Animated.View style={thumbStyle} />
     </Animated.View>
@@ -27,10 +27,10 @@ export function PulseDot({ size = 12 }: { size?: number }) {
   const c = usePalette();
   const pulse = useSharedValue(0);
   useEffect(() => {
-    pulse.value = withRepeat(withSequence(withTiming(1, { duration: 620, easing: Easing.inOut(Easing.sin) }), withTiming(0, { duration: 620, easing: Easing.inOut(Easing.sin) })), -1);
+    pulse.value = withRepeat(withSequence(withTiming(1, { duration: 800, easing: Easing.inOut(Easing.sin) }), withTiming(0, { duration: 800, easing: Easing.inOut(Easing.sin) })), -1);
     return () => cancelAnimation(pulse);
   }, [pulse]);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: 0.72 + pulse.value * 0.36 }], opacity: 0.75 + pulse.value * 0.25 }));
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: 0.84 + pulse.value * 0.16 }], opacity: 0.7 + pulse.value * 0.3 }));
   return <Animated.View style={[{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.text }, style]} />;
 }
 
