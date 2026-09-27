@@ -31,6 +31,12 @@ function effortName(t: Strings, effort: Turn['reasoningEffort']): string {
 
 // ------------------------------------------------------------------------------------------------------------------
 
+function UserBubble({ prompt, background, color }: { prompt: string; background: string; color: string }) {
+  return <View style={{ backgroundColor: background, borderRadius: radius.bubble + 2, paddingHorizontal: 16, paddingVertical: 10 }}>
+    <Text style={{ ...type.body, color }}>{prompt}</Text>
+  </View>;
+}
+
 function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
   const c = usePalette(); const t = useStrings();
   const locale = useApp(state => state.locale);
@@ -43,6 +49,7 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
     const when = turnTime(turn);
     openMenuFrom(bubbleRef.current, {
       header: when ? formatWhen(when, locale) : undefined, align: 'right',
+      lift: <UserBubble prompt={turn.prompt} background={c.user} color={c.userText} />,
       items: [
         { key: 'copy', label: t.copy, icon: 'copy', onPress: () => { void copyText(turn.prompt).then(ok => { if (ok) toast(t.copied); }); } },
         { key: 'select', label: t.selectText, icon: 'type', onPress: () => openSheet({ title: t.selectText, render: () => <Text selectable style={{ ...type.body, color: c.text, paddingHorizontal: 22, paddingBottom: 16 }}>{turn.prompt}</Text> }) },
@@ -50,7 +57,7 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
         { key: 'share', label: t.sharePrompt, icon: 'share-2', onPress: () => void shareText(turn.prompt) },
       ],
     });
-  }, [c.text, locale, squeeze, t, turn]);
+  }, [c.text, c.user, c.userText, locale, squeeze, t, turn]);
   return <Animated.View entering={fresh ? FadeInDown.duration(260).withInitialValues({ opacity: 0, transform: [{ translateY: 18 }] }) : undefined} style={{ alignItems: 'flex-end', paddingHorizontal: GUTTER, paddingTop: 12, gap: 6 }}>
     {turn.imageAttachment ? <Image source={{ uri: turn.imageAttachment.uri }} accessibilityLabel={t.attachedImage} resizeMode="cover" style={{ width: 196, height: 148, borderRadius: 18 }} /> : null}
     {turn.documentAttachment ? <View accessible accessibilityLabel={turn.documentAttachment.name} style={{ maxWidth: '84%', flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18, backgroundColor: c.surface }}>
@@ -58,9 +65,7 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
       <Text numberOfLines={1} ellipsizeMode="middle" style={{ ...type.label, fontSize: 14, color: c.text, flexShrink: 1 }}>{turn.documentAttachment.name}</Text>
     </View> : null}
     <PressableScale ref={bubbleRef} onLongPress={openActions} delayLongPress={320} scaleTo={1} accessibilityRole="text" accessibilityLabel={`${t.yourMessage}: ${turn.prompt}`} accessibilityActions={[{ name: 'longpress', label: t.more }]} onAccessibilityAction={openActions} style={{ maxWidth: '84%' }}>
-      <Animated.View style={[{ backgroundColor: c.user, borderRadius: radius.bubble + 2, paddingHorizontal: 16, paddingVertical: 10 }, bubbleStyle]}>
-        <Text style={{ ...type.body, color: c.userText }}>{turn.prompt}</Text>
-      </Animated.View>
+      <Animated.View style={bubbleStyle}><UserBubble prompt={turn.prompt} background={c.user} color={c.userText} /></Animated.View>
     </PressableScale>
   </Animated.View>;
 }

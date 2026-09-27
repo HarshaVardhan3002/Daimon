@@ -20,7 +20,11 @@ export type MenuItem =
   | { kind?: 'item'; key: string; label: string; icon?: FeatherName; iconNode?: React.ReactNode; danger?: boolean; disabled?: boolean; checked?: boolean; onPress: () => void }
   | { kind: 'divider'; key: string }
   | { kind: 'note'; key: string; label: string };
-export type MenuSpec = { anchor: Rect; items: MenuItem[]; header?: string; align?: 'left' | 'right'; minWidth?: number };
+export type MenuSpec = {
+  anchor: Rect; items: MenuItem[]; header?: string; align?: 'left' | 'right'; minWidth?: number;
+  /** Drawn over the anchor, above the dimmed backdrop, so the pressed element stays bright (as ChatGPT does). */
+  lift?: React.ReactNode;
+};
 export type SheetSpec = { title?: string; render: (close: () => void) => React.ReactNode };
 type DialogSpec =
   | { kind: 'confirm'; title: string; message?: string; confirmLabel: string; cancelLabel: string; destructive?: boolean; resolve: (value: boolean) => void }
@@ -114,6 +118,7 @@ function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
   return <View style={{ position: 'absolute', inset: 0, zIndex: 900, elevation: 30 }} accessibilityViewIsModal>
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
     <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel={strings.closeMenu} />
+    {spec.lift ? <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={{ position: 'absolute', left: anchor.x, top: anchor.y, width: anchor.width, height: anchor.height }}>{spec.lift}</View> : null}
     {/* The card claims its own touches: a tap on its header or padding must not fall through and close the menu. */}
     <Animated.View onLayout={onLayout} onStartShouldSetResponder={() => true} style={[{ position: 'absolute', top: size ? top : -9999, left: size ? left : 0, minWidth: spec.minWidth ?? 216, maxWidth: Math.min(320, screenW - MENU_MARGIN * 2), borderRadius: radius.card, backgroundColor: c.surface, paddingVertical: 6, transformOrigin: origin, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12 }, panelStyle]}>
       {spec.header ? <Text style={{ ...type.labelRegular, color: c.muted, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 6 }}>{spec.header}</Text> : null}
