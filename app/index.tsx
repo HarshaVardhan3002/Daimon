@@ -1,647 +1,379 @@
-import { Feather } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, AppState, BackHandler, Image, Keyboard, KeyboardAvoidingView, NativeModules, Platform, Pressable, ScrollView, Share, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { AppState, BackHandler, Image, Keyboard, NativeModules, Platform, Pressable, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, Extrapolation, FadeIn, FadeOut, SlideInDown, SlideOutDown, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { copy, themes } from '../src/design/theme';
-import type { Locale, ThemeMode } from '../src/design/theme';
-import { ChatClientError, sendChatCompletion } from '../src/chat/modelClient';
-import { reasoningEffortForMode } from '../src/chat/reasoningEffort';
-import { ReadableMessage } from '../src/chat/ReadableMessage';
-import { QuizCard } from '../src/chat/QuizCard';
-import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
-import { ReasoningGauge } from '../src/chat/ReasoningGauge';
-import { GeneratedImage } from '../src/chat/GeneratedImage';
+import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Animated, { Easing, FadeIn, FadeOut, SlideInDown, SlideOutDown, runOnJS, useAnimatedReaction, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraSheet, type CameraSheetHandle, type CameraSheetRect } from '../src/chat/CameraSheet';
-import { cameraAccess } from '../src/chat/cameraPermission';
 import type { CapturedPhoto } from '../src/chat/cameraFlow';
-import { persistRichReply } from '../src/chat/richReply';
-import { validateQuizCardData } from '../src/chat/quizCardData';
-import { imageAttachmentDataUri, isSupportedImage, persistImageAttachment, type ImageAttachment } from '../src/chat/imageAttachment';
-import { DocumentAttachmentError, documentAttachmentPayload, persistDocumentAttachment, supportedDocumentMimeType } from '../src/chat/documentAttachment';
-import { useAppSettings } from '../src/state/AppState';
-import type { ChatRequestError, PendingChatRequest, Turn } from '../src/state/AppState';
-import { buildChatContext, documentContextAfterSuccess, documentRequestForPrompt, getLegacyActivityText } from '../src/state/chatHistory';
-import { beginChatSend, completePendingTurn, failPendingTurn, forgetRetryableRequest, isRegeneratingTurn, rememberRetryableRequest, shouldShowGlobalChatError, updatePendingTurn } from '../src/state/chatRequestFlow';
-import { updateTurnList } from '../src/state/turns';
+import { cameraAccess } from '../src/chat/cameraPermission';
+import { ChatDrawer } from '../src/chat/ChatDrawer';
+import { ChatHeader, HEADER_HEIGHT } from '../src/chat/ChatHeader';
+import { cancelEdit, chatUi, currentRequest, drawerCloseSignal, dismissRequestError, retryRequest, stopSpeech, syncRequestWithActiveChat, useChatUi } from '../src/chat/chatController';
+import { Composer, type ComposerHandle } from '../src/chat/Composer';
+import { DocumentAttachmentError, persistDocumentAttachment, supportedDocumentMimeType } from '../src/chat/documentAttachment';
+import { errorText } from '../src/chat/errorText';
+import { isSupportedImage, persistImageAttachment } from '../src/chat/imageAttachment';
+import { PLUS_MENU_HEIGHT, PLUS_MENU_LEFT, PLUS_MENU_WIDTH, PlusMenu, PlusMenuRows, type PlusAction } from '../src/chat/PlusMenu';
+import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
+import { TurnView } from '../src/chat/TurnView';
+import { cosmos, motion, type } from '../src/design/tokens';
+import { track } from '../src/telemetry/telemetry';
+import { usePalette, useThemeMode } from '../src/design/useTheme';
+import { useStrings } from '../src/i18n/strings';
+import { appStore, setDocumentAttachment, setImageAttachment, setReasoningMode, setThinkHarder, startNewChat, useApp } from '../src/state/appStore';
+import { useStore } from '../src/state/store';
+import { shouldShowGlobalChatError } from '../src/state/chatRequestFlow';
+import { Icon } from '../src/ui/icons';
+import { IconButton } from '../src/ui/IconButton';
+import { toast } from '../src/ui/overlays';
+import { PressableScale, haptic } from '../src/ui/PressableScale';
 
-const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
-const ATTACHMENT_MENU_HEIGHT = 214;
-const ATTACHMENT_MENU_WIDTH = 255;
-const HEADER_HEIGHT = 56;
 // Shades only the keyboard while the reasoning dial is open: an app-attached window over the IME
-// (android/.../KeyboardScrimModule.kt). iOS has no equivalent: on iOS 26 the keyboard is drawn by the system outside
-// the app's windows (only UIWindow and UITextEffectsWindow exist in the scene), so nothing in-app can cover it.
+// (android/.../KeyboardScrimModule.kt). iOS draws its keyboard outside the app's windows, so nothing can cover it.
 const keyboardScrim = Platform.OS === 'android' ? NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined : undefined;
+const DIAL_SCRIM = 0.22;
 
-const errorText = (locale: Locale, error: ChatRequestError) => {
-  if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
-  if (error === 'cancelled') return locale === 'de' ? 'Antwort angehalten. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Response stopped. Your message stays in the chat and can be retried.';
-  if (error === 'interrupted') return locale === 'de' ? 'Die Antwort wurde unterbrochen. Du kannst es erneut versuchen.' : 'The response was interrupted. You can try again.';
-  if (error === 'reasoning_unavailable') return locale === 'de' ? 'Das Modell hat diese Denkstufe abgelehnt. Wähle im Menü „Standardmodell verwenden“ und tippe dann auf Erneut.' : 'The model did not accept this effort level. Choose “Use default model” in the menu, then retry.';
-  if (error === 'reasoning_image_unsupported') return locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Wähle im Menü „Standardmodell verwenden“; dein Entwurf und Bild bleiben erhalten.' : 'Image requests need the default model. Choose “Use default model” in the menu; your draft and image are still here.';
-  if (error === 'document_too_large') return locale === 'de' ? 'Die Datei ist größer als 8 MiB. Wähle eine kleinere Datei aus.' : 'This file is larger than 8 MiB. Choose a smaller file.';
-  if (error === 'document_too_many_pages') return locale === 'de' ? 'Das PDF hat mehr als 60 Seiten. Teile es in kleinere Dateien auf.' : 'This PDF has more than 60 pages. Split it into smaller files.';
-  if (error === 'document_password') return locale === 'de' ? 'Dieses PDF ist passwortgeschützt. Entferne den Passwortschutz und füge die Datei erneut hinzu.' : 'This PDF is password-protected. Remove the password and attach it again.';
-  if (error === 'document_no_text') return locale === 'de' ? 'In dieser Datei wurde kein lesbarer Text gefunden. Gescannte PDFs können noch nicht per OCR gelesen werden.' : 'No selectable text was found. Scanned PDFs are not supported because OCR is not available yet.';
-  if (error === 'document_encoding') return locale === 'de' ? 'Die Textdatei ist nicht UTF-8-codiert. Speichere sie als UTF-8 und füge sie erneut hinzu.' : 'This text file is not UTF-8 encoded. Save it as UTF-8 and attach it again.';
-  if (error === 'document_invalid') return locale === 'de' ? 'Die Datei konnte nicht gelesen werden. Exportiere sie erneut und füge die neue Datei hinzu.' : 'This file could not be read. Export it again and attach the new file.';
-  return locale === 'de' ? 'Die Antwort konnte nicht geladen werden. Versuche es erneut.' : 'The response couldn’t be loaded. Try again.';
-};
+export default function ChatScreen() {
+  const c = usePalette(); const t = useStrings(); const mode = useThemeMode();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
+  const locale = useApp(state => state.locale);
+  const activeChatId = useApp(state => state.activeChatId);
+  const isEmpty = useApp(state => state.conversation.length === 0);
+  const reasoningMode = useApp(state => state.reasoningMode);
+  const legacyPending = useApp(state => Boolean(state.activeSession.pendingLiveRequest));
+  const hasAttachment = useApp(state => Boolean(state.imageAttachment || state.documentAttachment));
+  const requestStatus = useChatUi(state => state.requestStatus);
+  const requestError = useChatUi(state => state.requestError);
 
-export default function HomeScreen() {
-  const { theme, locale, reasoningMode, draft, imageAttachment, documentAttachment, conversation, savedConversations, activeChatId, activeSession, hydrated, hydrationStatus, retryHydration, setReasoningMode, setDraft, setImageAttachment, setDocumentAttachment, setConversation, setActiveSession, setTheme, setLocale, startNewChat, openSavedConversation, updateTurnById } = useAppSettings();
-  const t = copy[locale]; const c = themes[theme]; const insets = useSafeAreaInsets(); const { width } = useWindowDimensions();
-  const [drawerOpen, setDrawerOpen] = useState(false); const [profileOpen, setProfileOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false); const [attachmentMenuVisible, setAttachmentMenuVisible] = useState(false); const [attachmentMenuInteractive, setAttachmentMenuInteractive] = useState(false); const [reasoningDialOpen, setReasoningDialOpen] = useState(false); const [chatActionsOpen, setChatActionsOpen] = useState(false); const [moreTurnId, setMoreTurnId] = useState<string | null>(null); const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null); const [query, setQuery] = useState(''); const [notice, setNotice] = useState(''); const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [requestError, setRequestError] = useState<ChatRequestError | null>(null);
-  const requestRef = useRef<PendingChatRequest | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const speechRunRef = useRef(0);
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [reducedMotion, setReducedMotion] = useState(false); const [busyCopy, setBusyCopy] = useState(false);
-  const scrollRef = useRef<ScrollView>(null); const inputRef = useRef<TextInput>(null); const followsBottom = useRef(true);
-  const keyboardBoundsRef = useRef<{ top: number; height: number } | null>(null);
-  const dialOverlayBoundsRef = useRef<View>(null);
-  const openReasoningDial = useCallback(() => setReasoningDialOpen(true), []);
-  const closeReasoningDial = useCallback(() => setReasoningDialOpen(false), []);
-  const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
-  const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
-  const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
-  const [cameraOpen, setCameraOpen] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null); const [cameraExitTo, setCameraExitTo] = useState<CameraSheetRect | null>(null);
-  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraAskingRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
-  // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
-  const attachmentCameraHandoff = useSharedValue(0);
-  // 1 while the camera sheet is drawn over the menu card's place; the card itself hides so the two never double up.
-  const attachmentCameraCovering = useSharedValue(0);
-  const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
-  const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
+  const composerRef = useRef<ComposerHandle>(null);
+  const scrollRef = useRef<Animated.ScrollView>(null);
+  const plusRef = useRef<View>(null);
+  const boundsRef = useRef<View>(null);
+  const composerHeight = useSharedValue(120);
+  const blankSpace = useSharedValue(0);
+  const atEnd = useSharedValue(true);
+  const keyboard = useReanimatedKeyboardAnimation();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const keyboardBounds = useRef<{ top: number; height: number } | null>(null);
 
-  const closeAttachmentMenu = useCallback(() => {
-    setAttachmentSheetOpen(false);
-    setAttachmentMenuInteractive(false);
-    if (!attachmentMenuVisible) return;
-    attachmentMenuProgress.value = withTiming(0, { duration: reducedMotion ? 1 : 190, easing: Easing.in(Easing.cubic) }, finished => {
-      if (finished) runOnJS(setAttachmentMenuVisible)(false);
-    });
-  }, [attachmentMenuVisible, attachmentMenuProgress, reducedMotion]);
-  const openAttachmentMenu = useCallback(() => {
-    const begin = (left: number, top: number, rootHeight: number) => {
-      if (rootHeight < ATTACHMENT_MENU_HEIGHT) return;
-      attachmentOriginLeft.value = left;
-      attachmentOriginTop.value = top;
-      attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - ATTACHMENT_MENU_HEIGHT, top + 44 - ATTACHMENT_MENU_HEIGHT));
-      setAttachmentMenuInteractive(false);
-      setAttachmentMenuVisible(true);
-      setAttachmentSheetOpen(true);
-      attachmentMenuProgress.value = withTiming(1, { duration: reducedMotion ? 1 : 270, easing: Easing.out(Easing.cubic) }, finished => {
-        if (finished) runOnJS(setAttachmentMenuInteractive)(true);
-      });
-    };
-    const plus = attachmentPlusRef.current;
-    const bounds = attachmentBoundsRef.current;
+  // ---- Drawer: the chat slides right and dims; the drawer follows the finger and settles by velocity.
+  const drawerWidth = Math.min(Math.round(width * 0.8), 340);
+  const drawer = useSharedValue(0);
+  const dragStart = useSharedValue(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpenRef = useRef(false);
+  const settleDrawer = useCallback((open: boolean) => {
+    if (drawerOpenRef.current !== open) { drawerOpenRef.current = open; track('drawer', { open }); }
+    setDrawerOpen(open);
+    drawer.value = withSpring(open ? 1 : 0, motion.settle);
+  }, [drawer]);
+  const openDrawer = useCallback(() => { Keyboard.dismiss(); haptic('selection'); settleDrawer(true); }, [settleDrawer]);
+  const closeDrawer = useCallback(() => settleDrawer(false), [settleDrawer]);
+  const drawerCloseCount = useStore(drawerCloseSignal, state => state.count);
+  useEffect(() => {
+    if (!drawerCloseCount) return;
+    // Snap shut: the chat is revealed as the screen above fades away, so there is nothing to animate.
+    drawerOpenRef.current = false; setDrawerOpen(false); drawer.value = 0;
+  }, [drawer, drawerCloseCount]);
+
+  // ---- Plus menu and camera (the camera sheet grows out of the menu card and shrinks back into it).
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuSheetOpen, setMenuSheetOpen] = useState(false);
+  const [menuInteractive, setMenuInteractive] = useState(false);
+  const menuProgress = useSharedValue(0); const originLeft = useSharedValue(30); const originTop = useSharedValue(0); const targetTop = useSharedValue(0);
+  const handoff = useSharedValue(0); const covering = useSharedValue(0);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null);
+  const [cameraExitTo, setCameraExitTo] = useState<CameraSheetRect | null>(null);
+  const cameraSheetRef = useRef<CameraSheetHandle>(null);
+  const cameraOpenRef = useRef(false); const cameraAskingRef = useRef(false); const cameraRestoresKeyboard = useRef(false);
+  const [dialOpen, setDialOpen] = useState(false);
+  const thinkHarder = reasoningMode !== 'default';
+
+  const closeMenu = useCallback(() => {
+    setMenuSheetOpen(false); setMenuInteractive(false);
+    if (!menuVisible) return;
+    menuProgress.value = withTiming(0, { duration: reducedMotion ? 1 : 190, easing: Easing.in(Easing.cubic) }, done => { if (done) runOnJS(setMenuVisible)(false); });
+  }, [menuProgress, menuVisible, reducedMotion]);
+  const openMenu = useCallback(() => {
+    const plus = plusRef.current; const bounds = boundsRef.current;
     if (!plus || !bounds) return;
-    plus.measureInWindow((plusX, plusY, plusWidth, plusHeight) => {
-      if (plusWidth < 44 || plusHeight < 44) return;
-      bounds.measureInWindow((rootX, rootY, _rootWidth, rootHeight) => {
-        if (rootHeight <= 0) return;
-        begin(plusX - rootX + (plusWidth - 44) / 2, plusY - rootY + (plusHeight - 44) / 2, rootHeight);
+    plus.measureInWindow((plusX, plusY, plusW, plusH) => {
+      bounds.measureInWindow((rootX, rootY, _rootW, rootH) => {
+        if (rootH < PLUS_MENU_HEIGHT || plusW < 20) return;
+        const left = plusX - rootX + (plusW - 44) / 2; const top = plusY - rootY + (plusH - 44) / 2;
+        originLeft.value = left; originTop.value = top;
+        targetTop.value = Math.max(insets.top + 8, Math.min(rootH - PLUS_MENU_HEIGHT, top + 44 - PLUS_MENU_HEIGHT));
+        setMenuInteractive(false); setMenuVisible(true); setMenuSheetOpen(true);
+        haptic('selection');
+        menuProgress.value = withTiming(1, { duration: reducedMotion ? 1 : 270, easing: Easing.out(Easing.cubic) }, done => { if (done) runOnJS(setMenuInteractive)(true); });
       });
     });
-  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentTargetTop, reducedMotion]);
+  }, [insets.top, menuProgress, originLeft, originTop, reducedMotion, targetTop]);
 
-  const finishCameraHandoff = useCallback(() => {
-    attachmentMenuProgress.value = 0;
-    attachmentCameraHandoff.value = 0;
-    setAttachmentMenuVisible(false);
-  }, [attachmentCameraHandoff, attachmentMenuProgress]);
+  const finishHandoff = useCallback(() => { menuProgress.value = 0; handoff.value = 0; setMenuVisible(false); }, [handoff, menuProgress]);
   const openCamera = useCallback(async () => {
     if (cameraOpenRef.current || cameraAskingRef.current) return;
-    const fromMenu = attachmentMenuVisible;
+    const fromMenu = menuVisible;
     const restoreKeyboard = keyboardVisible;
     // Ask before the sheet opens. Android pauses the app behind its permission dialog, and a sheet that finished growing
     // during that pause came back open but invisible (still catching taps) once the app resumed.
     cameraAskingRef.current = true;
     try { await cameraAccess(true); } catch { /* the sheet reads access again and shows its denied state */ } finally { cameraAskingRef.current = false; }
-    cameraRestoresKeyboardRef.current = restoreKeyboard;
+    cameraRestoresKeyboard.current = restoreKeyboard;
     // Blur explicitly: a still-focused input would ignore the next tap and the keyboard would not come back after the camera.
-    inputRef.current?.blur(); Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
-    setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
+    composerRef.current?.blur(); Keyboard.dismiss(); keyboardScrim?.hide(); setDialOpen(false);
+    setCameraOrigin(fromMenu ? { x: PLUS_MENU_LEFT, y: targetTop.value, width: PLUS_MENU_WIDTH, height: PLUS_MENU_HEIGHT } : null);
     cameraOpenRef.current = true; setCameraOpen(true);
-    if (!fromMenu) return;
-    setAttachmentSheetOpen(false); setAttachmentMenuInteractive(false);
-  }, [attachmentMenuVisible, attachmentTargetTop, keyboardVisible]);
-  // The sheet draws the card (colour and rows) itself as it grows, so the real card hides the frame the sheet covers it.
+    if (fromMenu) { setMenuSheetOpen(false); setMenuInteractive(false); }
+  }, [keyboardVisible, menuVisible, targetTop]);
   const onCameraEnterStart = useCallback(() => {
-    if (!attachmentMenuVisible) return;
-    attachmentCameraCovering.value = 1;
-    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 220 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
-  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuVisible, finishCameraHandoff, reducedMotion]);
-  const onCameraExited = useCallback((to: 'menu' | 'chat') => {
-    attachmentCameraCovering.value = 0;
-    if (to === 'menu') setAttachmentMenuInteractive(true);
-  }, [attachmentCameraCovering]);
+    if (!menuVisible) return;
+    covering.value = 1;
+    handoff.value = withTiming(1, { duration: reducedMotion ? 1 : 220 }, done => { if (done) runOnJS(finishHandoff)(); });
+  }, [covering, finishHandoff, handoff, menuVisible, reducedMotion]);
+  const onCameraExited = useCallback((to: 'menu' | 'chat') => { covering.value = 0; if (to === 'menu') setMenuInteractive(true); }, [covering]);
   const closeCamera = useCallback((to: 'menu' | 'chat') => {
     cameraOpenRef.current = false;
     const backToMenu = to === 'menu' && cameraOrigin !== null;
     setCameraExitTo(backToMenu ? cameraOrigin : null);
     setCameraOpen(false);
-    // Every exit (back to the menu, outside tap, Use photo) gives the draft its keyboard back if the camera took it.
-    if (cameraRestoresKeyboardRef.current) {
-      cameraRestoresKeyboardRef.current = false;
-      // Blur first so focus() is a real focus change on Android and raises the keyboard again.
-      inputRef.current?.blur();
-      setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
+    // Every exit gives the draft its keyboard back if the camera took it.
+    if (cameraRestoresKeyboard.current) {
+      cameraRestoresKeyboard.current = false;
+      composerRef.current?.blur();
+      setTimeout(() => { if (!cameraOpenRef.current) composerRef.current?.focus(); }, 60);
     }
     if (!backToMenu) return;
-    // Backing out returns to the attachment menu the camera grew from. The sheet shrinks into the card's place and
-    // hands over to it when it lands (onCameraExited); only the dimmed backdrop fades in here.
-    attachmentMenuProgress.value = 1;
-    attachmentCameraCovering.value = 1;
-    attachmentCameraHandoff.value = 1;
-    setAttachmentMenuVisible(true); setAttachmentSheetOpen(true); setAttachmentMenuInteractive(false);
-    attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 220, easing: Easing.bezier(0.3, 0, 0.2, 1) });
-  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const pending = activeSession.pendingChatRequest;
-    if (!pending) { requestRef.current = null; setRequestStatus('idle'); setRequestError(null); return; }
-    requestRef.current = pending; setRequestError(pending.error ?? 'interrupted'); setRequestStatus('error');
-  }, [hydrated, activeChatId]);
-  useEffect(() => { AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion).catch(() => undefined); const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion); return () => sub.remove(); }, []);
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', event => {
-      setKeyboardVisible(true);
-      const bounds = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
-      keyboardBoundsRef.current = bounds;
-      if (reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
-      requestAnimationFrame(() => {
-        dialOverlayBoundsRef.current?.measureInWindow((_x, y, _width, height) => {
-          const rootBottom = y + height;
-          const imeTop = event.endCoordinates.screenY;
-    setDialKeyboardBottomOffset(Math.max(0, rootBottom - imeTop));
-        });
-      });
-    });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      keyboardBoundsRef.current = null;
-      keyboardScrim?.hide();
-      setKeyboardVisible(false);
-      setDialKeyboardBottomOffset(0);
-      if (!attachmentSheetOpen) return;
-      const plus = attachmentPlusRef.current;
-      const bounds = attachmentBoundsRef.current;
-      if (!plus || !bounds) { closeAttachmentMenu(); return; }
-      plus.measureInWindow((plusX, plusY, plusWidth, plusHeight) => {
-        bounds.measureInWindow((rootX, rootY, _rootWidth, rootHeight) => {
-          if (plusWidth >= 44 && plusHeight >= 44 && rootHeight >= ATTACHMENT_MENU_HEIGHT) {
-            const top = plusY - rootY + (plusHeight - 44) / 2;
-            attachmentOriginLeft.value = plusX - rootX + (plusWidth - 44) / 2;
-            attachmentOriginTop.value = top;
-            attachmentTargetTop.value = Math.max(0, Math.min(rootHeight - ATTACHMENT_MENU_HEIGHT, top + 44 - ATTACHMENT_MENU_HEIGHT));
-          }
-          closeAttachmentMenu();
-        });
-      });
-    });
-    return () => { show.remove(); hide.remove(); };
-  }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu, reasoningDialOpen]);
-  useEffect(() => {
-    if (reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
-      const { top, height } = keyboardBoundsRef.current;
-      keyboardScrim?.show(top, height, 0.22);
-    } else keyboardScrim?.hide();
-    return () => keyboardScrim?.hide();
-  }, [keyboardVisible, reasoningDialOpen]);
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', state => {
-      if (state !== 'active') {
-        keyboardScrim?.hide();
-        return;
-      }
-      if (state === 'active' && !attachmentSheetOpen) {
-        attachmentMenuProgress.value = 0;
-        setAttachmentMenuVisible(false);
-        setAttachmentMenuInteractive(false);
-      }
-      if (reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
-        const { top, height } = keyboardBoundsRef.current;
-        keyboardScrim?.show(top, height, 0.22);
-      }
-    });
-    return () => sub.remove();
-  }, [attachmentMenuProgress, attachmentSheetOpen, keyboardVisible, reasoningDialOpen]);
-  useEffect(() => () => { keyboardScrim?.hide(); abortRef.current?.abort(); speechRunRef.current += 1; void Speech.stop(); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
-  useEffect(() => { speechRunRef.current += 1; setSpeakingTurnId(null); setMoreTurnId(null); setChatActionsOpen(false); void Speech.stop(); }, [activeChatId]);
-  useEffect(() => { drawerProgress.value = withTiming(drawerOpen ? 1 : 0, { duration: reducedMotion ? 1 : drawerOpen ? 240 : 190, easing: Easing.out(Easing.cubic) }); }, [drawerOpen, reducedMotion, drawerProgress]);
-  useFocusEffect(useCallback(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (cameraOpen) return cameraSheetRef.current?.handleBack() ?? true;
-      if (reasoningDialOpen) { closeReasoningDial(); return true; }
-      if (attachmentSheetOpen || attachmentMenuVisible) { closeAttachmentMenu(); return true; }
-      if (drawerOpen) { setDrawerOpen(false); Keyboard.dismiss(); return true; }
-      if (profileOpen) { setProfileOpen(false); return true; }
-      if (keyboardVisible) { Keyboard.dismiss(); return true; }
-      return false;
-    });
-    return () => sub.remove();
-  }, [cameraOpen, reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
-
-  const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
-  const runChatRequest = useCallback(async (request: PendingChatRequest) => {
-    if (abortRef.current || requestRef.current?.status === 'loading') return;
-    const previousRequest = requestRef.current;
-    requestRef.current = { ...request, status: 'loading', error: undefined };
-    const activeRequest = requestRef.current;
-    setActiveSession(current => {
-      let retryable = current.retryableChatRequests;
-      if (previousRequest && previousRequest.pendingTurnId !== activeRequest.pendingTurnId) retryable = rememberRetryableRequest(retryable, previousRequest);
-      retryable = forgetRetryableRequest(retryable, activeRequest.pendingTurnId ?? '');
-      return { ...current, retryableChatRequests: retryable.length ? retryable : undefined, pendingChatRequest: activeRequest };
-    });
-    setRequestStatus('loading'); setRequestError(null);
-    const controller = new AbortController(); abortRef.current = controller;
-    const requestDocument = request.documentAttachment ?? request.documentContextAttachment;
-    try {
-      const lastMessage = request.messages[request.messages.length - 1];
-      const messages = requestDocument
-        ? [...request.messages.slice(0, -1), { ...lastMessage, document: await documentAttachmentPayload(requestDocument) }]
-        : request.attachment
-          ? [...request.messages.slice(0, -1), { ...lastMessage, image: await imageAttachmentDataUri(request.attachment) }]
-          : request.messages;
-      const result = await sendChatCompletion(messages, { baseUrl: CHAT_PROXY_URL, signal: controller.signal, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) });
-      const id = request.pendingTurnId ?? `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const rich = result.message.rich ? await persistRichReply(result.message.rich, id) : undefined;
-      const turn: Turn = { id, prompt: request.prompt, locale: request.locale, status: 'complete', answer: result.message.content, ...(request.attachment ? { imageAttachment: request.attachment } : {}), ...(request.documentAttachment ? { documentAttachment: request.documentAttachment } : {}), ...(request.documentAttachment && result.documentInfo ? { documentInfo: result.documentInfo } : {}), ...(rich ? { rich } : {}) };
-      followsBottom.current = true;
-      setConversation(previous => {
-        if (request.pendingTurnId) return completePendingTurn(previous, turn);
-        const replacementIndex = request.replacementTurnId ? previous.findIndex(item => item.id === request.replacementTurnId) : -1;
-        if (replacementIndex === previous.length - 1 && replacementIndex >= 0) return [...previous.slice(0, replacementIndex), turn];
-        return [...previous, turn];
-      });
-      if (requestRef.current?.pendingTurnId === request.pendingTurnId) requestRef.current = null;
-      setActiveSession(current => ({ ...current, activeDocumentContext: documentContextAfterSuccess(current.activeDocumentContext, request.documentAttachment, Boolean(request.attachment)), retryableChatRequests: forgetRetryableRequest(current.retryableChatRequests, request.pendingTurnId ?? ''), pendingChatRequest: current.pendingChatRequest?.pendingTurnId === request.pendingTurnId ? undefined : current.pendingChatRequest }));
-      setRequestStatus('idle'); setRequestError(null);
-    } catch (error) {
-      const cancelled = (error as { name?: string } | null)?.name === 'AbortError';
-      const disconnected = error instanceof ChatClientError && error.code === 'PROXY_UNREACHABLE';
-      const code = error instanceof ChatClientError || error instanceof DocumentAttachmentError ? error.code : '';
-      const documentError: ChatRequestError | undefined = code === 'REASONING_IMAGE_UNSUPPORTED' ? 'reasoning_image_unsupported'
-        : code === 'REASONING_UNAVAILABLE' ? 'reasoning_unavailable'
-        : code === 'DOCUMENT_TOO_MANY_PAGES' ? 'document_too_many_pages'
-        : code === 'DOCUMENT_PASSWORD' ? 'document_password'
-          : code === 'DOCUMENT_NO_TEXT' ? 'document_no_text'
-            : code === 'DOCUMENT_ENCODING' ? 'document_encoding'
-              : code === 'DOCUMENT_INVALID' ? 'document_invalid'
-              : (code === 'DOCUMENT_TOO_LARGE' || (code === 'REQUEST_TOO_LARGE' && Boolean(requestDocument))) ? 'document_too_large' : undefined;
-      const kind: ChatRequestError = cancelled ? 'cancelled' : disconnected ? 'disconnected' : documentError ?? 'failed';
-      const failed: PendingChatRequest = { ...request, status: 'error', error: kind };
-      requestRef.current = failed; setActiveSession(current => ({ ...current, pendingChatRequest: failed }));
-      if (request.pendingTurnId) setConversation(previous => failPendingTurn(previous, request.pendingTurnId!, kind));
-      setRequestError(kind); setRequestStatus('error');
-    } finally { if (abortRef.current === controller) abortRef.current = null; }
-  }, [setActiveSession, setConversation]);
-
-  const send = useCallback(() => {
-    const draftSnapshot = draft; const prompt = draftSnapshot.trim() || (documentAttachment ? locale === 'de' ? 'Fasse diese Datei zusammen.' : 'Summarize this file.' : locale === 'de' ? 'Was ist auf diesem Bild zu sehen?' : 'What is in this image?');
-    if ((!draftSnapshot.trim() && !imageAttachment && !documentAttachment) || abortRef.current || requestRef.current?.status === 'loading') return;
-    const selectedEffort = reasoningEffortForMode(reasoningMode);
-    if (imageAttachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen im Menü „Standardmodell verwenden“ wählen. Entwurf und Bild bleiben erhalten.' : 'Choose “Use default model” in the menu before sending an image. Your draft and image are still here.'); return; }
-    const requestDocument = documentRequestForPrompt(documentAttachment, Boolean(imageAttachment), activeSession.activeDocumentContext);
-    const pendingTurnId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const request: PendingChatRequest = { messages: buildChatContext(conversation, prompt), prompt, locale, draftSnapshot, ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}), pendingTurnId, ...(imageAttachment ? { attachment: imageAttachment } : {}), ...requestDocument, status: 'loading' };
-    const sendStart = beginChatSend(request, pendingTurnId);
-    setConversation(previous => [...previous, sendStart.turn]);
-    setDraft(sendStart.composerDraft);
-    setImageAttachment(current => current?.uri === sendStart.imageUri ? undefined : current);
-    setDocumentAttachment(current => current?.uri === sendStart.documentUri ? undefined : current);
-    void runChatRequest(request);
-  }, [draft, imageAttachment, documentAttachment, activeSession.activeDocumentContext, conversation, locale, reasoningMode, runChatRequest, setConversation, setDraft, setImageAttachment, setDocumentAttachment, showNotice]);
-  const retryRequest = useCallback((turnId?: string) => {
-    if (abortRef.current || requestRef.current?.status === 'loading') return;
-    const current = requestRef.current;
-    const pending = current?.pendingTurnId === turnId || !turnId ? current
-      : activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
-    if (!pending) return;
-    const selectedEffort = reasoningEffortForMode(reasoningMode);
-    if (pending.attachment && selectedEffort) { showNotice(locale === 'de' ? 'Für Bildanfragen im Menü „Standardmodell verwenden“ wählen. Entwurf und Bild bleiben erhalten.' : 'Choose “Use default model” in the menu before retrying an image. Your draft and image are still here.'); return; }
-    const configuredRequest = { ...pending, ...(selectedEffort ? { reasoningEffort: selectedEffort } : { reasoningEffort: undefined }) };
-    if (pending.pendingTurnId) setConversation(previous => updatePendingTurn(previous, pending.pendingTurnId!, 'streaming'));
-    void runChatRequest(configuredRequest);
-  }, [activeSession.retryableChatRequests, runChatRequest, setConversation, reasoningMode, showNotice, locale]);
-  const stopRequest = useCallback(() => abortRef.current?.abort(), []);
-  const newChat = useCallback(() => {
-    startNewChat(); setDrawerOpen(false); setProfileOpen(false); Keyboard.dismiss();
-  }, [startNewChat]);
-  const openDrawer = useCallback(() => { Keyboard.dismiss(); setProfileOpen(false); setDrawerOpen(true); void Haptics.selectionAsync().catch(() => undefined); }, []);
-  const closeDrawer = useCallback(() => { setDrawerOpen(false); setProfileOpen(false); }, []);
-  const openSettings = useCallback(() => { Keyboard.dismiss(); setProfileOpen(true); setDrawerOpen(true); }, []);
-  const copyAnswer = useCallback(async (text: string) => {
-    if (busyCopy) return;
-    setBusyCopy(true);
-    try { await Clipboard.setStringAsync(text); showNotice(locale === 'de' ? 'Kopiert' : 'Copied'); }
-    catch { showNotice(locale === 'de' ? 'Kopieren nicht möglich' : 'Could not copy'); }
-    finally { setTimeout(() => setBusyCopy(false), 750); }
-  }, [busyCopy, locale, showNotice]);
-  const shareText = useCallback(async (text: string) => {
-    try { await Share.share({ message: text }); }
-    catch { showNotice(locale === 'de' ? 'Teilen nicht möglich' : 'Could not share'); }
-  }, [locale, showNotice]);
-  const readAloud = useCallback(async (turnId: string, text: string, turnLocale: Locale) => {
-    if (speakingTurnId === turnId) {
-      speechRunRef.current += 1; setSpeakingTurnId(null); await Speech.stop(); return;
-    }
-    const runId = ++speechRunRef.current;
-    setSpeakingTurnId(null);
-    await Speech.stop();
-    if (speechRunRef.current !== runId) return;
-    setSpeakingTurnId(turnId);
-    Speech.speak(text, {
-      language: turnLocale === 'de' ? 'de-DE' : 'en-US',
-      onDone: () => { if (speechRunRef.current === runId) setSpeakingTurnId(null); },
-      onStopped: () => { if (speechRunRef.current === runId) setSpeakingTurnId(null); },
-      onError: () => { if (speechRunRef.current === runId) { setSpeakingTurnId(null); showNotice(locale === 'de' ? 'Vorlesen nicht möglich' : 'Could not read aloud'); } },
-    });
-  }, [locale, showNotice, speakingTurnId]);
-  const regenerateTurn = useCallback((turn: Turn) => {
-    if (requestStatus === 'loading' || conversation.at(-1)?.id !== turn.id || draft.trim() || imageAttachment || documentAttachment
-      || turn.status !== 'complete' || turn.imageAttachment || turn.documentAttachment || turn.rich || turn.id.startsWith('sample-') || turn.liveActivity || turn.liveProgress || !turn.prompt.trim() || !turn.answer.trim()) return;
-    const request: PendingChatRequest = {
-      messages: buildChatContext(conversation.slice(0, -1), turn.prompt),
-      prompt: turn.prompt,
-      locale: turn.locale,
-      draftSnapshot: draft,
-      replacementTurnId: turn.id,
-      status: 'loading',
-    };
-    setMoreTurnId(null);
-    void runChatRequest(request);
-  }, [conversation, draft, imageAttachment, documentAttachment, requestStatus, runChatRequest]);
-  const shareConversation = useCallback(() => {
-    const transcript = conversation.map(turn => `${locale === 'de' ? 'Du' : 'You'}: ${turn.prompt}\n\nDaimon: ${turn.answer}`).join('\n\n');
-    if (transcript) void shareText(transcript);
-    setChatActionsOpen(false);
-  }, [conversation, locale, shareText]);
-
-  const hasCurrentContent = Boolean(conversation.length || draft.trim() || imageAttachment || documentAttachment || activeSession.activeDocumentContext || activeSession.pendingChatRequest || activeSession.pendingLiveRequest || activeSession.sampleSourceSelected);
-  const reasoningModeLabel = reasoningMode === 'instant' ? (locale === 'de' ? 'Sofort' : 'Instant') : reasoningMode === 'medium' ? (locale === 'de' ? 'Mittel' : 'Medium') : reasoningMode === 'high' ? (locale === 'de' ? 'Hoch' : 'High') : (locale === 'de' ? 'Standard' : 'Default');
-  const retryAllowed = Boolean(requestRef.current && !requestError?.startsWith('document_'));
-  const requestErrorMessage = requestError ? errorText(locale, requestError) : '';
-  const showGlobalRequestError = shouldShowGlobalChatError(requestRef.current, requestStatus === 'error' && Boolean(requestError));
-  const currentTitle = conversation[0]?.prompt ?? activeSession.pendingChatRequest?.prompt ?? activeSession.pendingLiveRequest?.request.prompt ?? (draft.trim().slice(0, 60) || (documentAttachment?.name || (imageAttachment ? (locale === 'de' ? 'Bild' : 'Image') : activeSession.sampleSourceSelected ? locale === 'de' ? 'Gespeicherter Chat' : 'Saved conversation' : '')));
-  const showCurrent = hasCurrentContent && currentTitle.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
-  const filteredSaved = savedConversations.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const isEmpty = conversation.length === 0;
-  const rootStyle = useMemo(() => ({ flex: 1, backgroundColor: c.canvas }), [c.canvas]);
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: drawerProgress.value * 0.38 }));
-  const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(drawerProgress.value, [0, 1], [-drawerWidth, 0]) }] }));
-  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 * (1 - attachmentCameraHandoff.value) }));
-  const attachmentCardStyle = useAnimatedStyle(() => ({
-    left: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginLeft.value, 22]),
-    top: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginTop.value, attachmentTargetTop.value]),
-    width: interpolate(attachmentMenuProgress.value, [0, 1], [44, 255]),
-    height: interpolate(attachmentMenuProgress.value, [0, 1], [44, ATTACHMENT_MENU_HEIGHT]),
-    borderRadius: 22,
-    backgroundColor: c.surface,
-    shadowOpacity: attachmentMenuProgress.value * 0.28 * (1 - attachmentCameraHandoff.value),
-    opacity: 1 - attachmentCameraCovering.value,
-  }));
-  // Also drawn (inert) inside the camera sheet, so the rows fade within the card as it grows into the viewfinder and back.
-  const attachmentRows = (live: boolean) => ([
-    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
-    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
-    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-  ]).map(item => <Pressable key={item.key} disabled={!live || !attachmentMenuInteractive} onPress={() => {
-    if (item.key === 'camera') void openCamera();
-    else void chooseAttachment(item.key);
-  }} accessible={live} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
-    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
-    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
-  </Pressable>);
-  // Stable so the memoised camera sheet skips the chat's per-keystroke renders; the ghost rows are inert, so only
-  // their look matters here.
-  const cameraGhost = useMemo(() => <View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>{attachmentRows(false)}</View>, [locale, c.raised, c.text]);
-  const cameraPalette = useMemo(() => ({ surface: c.surface }), [c.surface]);
-  const attachmentPlusStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
-  }));
-  const attachmentContentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(attachmentMenuProgress.value, [0, 1], [10, 0]) }],
-  }));
-  const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen && !cameraOpen), [cameraOpen, drawerOpen, gestureStartX, openDrawer]);
-  const drawerGesture = useMemo(() => Gesture.Pan().activeOffsetX(-12).failOffsetY([-10, 10]).onEnd(event => { if (event.translationX < -48) runOnJS(closeDrawer)(); }).enabled(drawerOpen), [closeDrawer, drawerOpen]);
-
-  const retryableRequestForTurn = (turnId: string) => {
-    const active = requestRef.current;
-    if (active?.pendingTurnId === turnId && active.status === 'error') return active.error?.startsWith('document_') ? undefined : active;
-    const stored = activeSession.retryableChatRequests?.find(item => item.pendingTurnId === turnId);
-    return stored?.error?.startsWith('document_') ? undefined : stored;
-  };
+    // Backing out returns to the menu the camera grew from; the sheet shrinks into the card and hands over on landing.
+    menuProgress.value = 1; covering.value = 1; handoff.value = 1;
+    setMenuVisible(true); setMenuSheetOpen(true); setMenuInteractive(false);
+    handoff.value = withTiming(0, { duration: reducedMotion ? 1 : 220, easing: Easing.bezier(0.3, 0, 0.2, 1) });
+  }, [cameraOrigin, covering, handoff, menuProgress, reducedMotion]);
 
   const chooseAttachment = useCallback(async (kind: 'photos' | 'files') => {
-    closeAttachmentMenu();
+    closeMenu();
+    const de = appStore.get().locale === 'de';
     try {
-      let uri = ''; let name = ''; let mimeType: string | null | undefined; let width = 0; let height = 0; let sizeBytes: number | null | undefined;
+      let uri = ''; let name = ''; let mimeType: string | null | undefined; let imageWidth = 0; let imageHeight = 0; let sizeBytes: number | null | undefined;
       if (kind === 'photos') {
         const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
         if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'photo'; mimeType = asset.mimeType; width = asset.width; height = asset.height;
+        const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'photo'; mimeType = asset.mimeType; imageWidth = asset.width; imageHeight = asset.height;
       } else {
         const result = await DocumentPicker.getDocumentAsync({ type: ['image/png', 'image/jpeg', 'application/pdf', 'text/plain', 'text/markdown'], copyToCacheDirectory: true, multiple: false });
         if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0]; uri = asset.uri; name = asset.name; mimeType = asset.mimeType; sizeBytes = asset.size; width = 0; height = 0;
+        const asset = result.assets[0]; uri = asset.uri; name = asset.name; mimeType = asset.mimeType; sizeBytes = asset.size;
       }
       const documentMime = kind === 'files' ? supportedDocumentMimeType(mimeType, name) : undefined;
-      if (documentMime) {
-        const attachment = await persistDocumentAttachment(uri, name, documentMime, sizeBytes);
-        setImageAttachment(undefined); setDocumentAttachment(attachment);
-        return;
+      if (documentMime) { const attachment = await persistDocumentAttachment(uri, name, documentMime, sizeBytes); setImageAttachment(undefined); setDocumentAttachment(attachment); return; }
+      if (!isSupportedImage(mimeType, name)) { toast(de ? 'Bitte eine PNG- oder JPEG-Datei auswählen' : 'Choose a PNG or JPEG image'); return; }
+      if (!imageWidth || !imageHeight) {
+        const size = await new Promise<{ width: number; height: number }>((resolve, reject) => Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject));
+        imageWidth = size.width; imageHeight = size.height;
       }
-      if (!isSupportedImage(mimeType, name)) { showNotice(locale === 'de' ? 'Bitte eine PNG- oder JPEG-Datei auswählen' : 'Choose a PNG or JPEG image'); return; }
-      if (!width || !height) {
-        const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject));
-        width = dimensions.width; height = dimensions.height;
-      }
-      const attachment = await persistImageAttachment(uri, name, width, height);
+      const attachment = await persistImageAttachment(uri, name, imageWidth, imageHeight);
       setDocumentAttachment(undefined); setImageAttachment(attachment);
-    } catch {
-      showNotice(kind === 'files'
-        ? (locale === 'de' ? 'Datei konnte nicht hinzugefügt werden. Erlaubt sind PDF, TXT und Markdown bis 8 MiB.' : 'Could not attach that file. PDF, TXT, and Markdown up to 8 MiB are supported.')
-        : (locale === 'de' ? 'Bild konnte nicht hinzugefügt werden' : 'Could not attach that image'));
+    } catch (error) {
+      if (error instanceof DocumentAttachmentError && error.code === 'DOCUMENT_TOO_LARGE') { toast(errorText(appStore.get().locale, 'document_too_large')); return; }
+      toast(kind === 'files' ? (de ? 'Datei konnte nicht hinzugefügt werden. Erlaubt sind PDF, TXT und Markdown bis 8 MiB.' : 'Could not attach that file. PDF, TXT, and Markdown up to 8 MiB are supported.') : (de ? 'Bild konnte nicht hinzugefügt werden' : 'Could not attach that image'));
     }
-  }, [closeAttachmentMenu, locale, setActiveSession, setDocumentAttachment, setImageAttachment, showNotice]);
+  }, [closeMenu]);
   /** Throws so the camera sheet can keep the photo in review and offer another try. */
   const attachCapturedPhoto = useCallback(async (photo: CapturedPhoto) => {
     const attachment = await persistImageAttachment(photo.uri, 'camera.jpg', photo.width, photo.height);
     setDocumentAttachment(undefined); setImageAttachment(attachment);
-  }, [setDocumentAttachment, setImageAttachment]);
-  const removeImageAttachment = useCallback(() => setImageAttachment(undefined), [setImageAttachment]);
-  const removeDocumentAttachment = useCallback(() => setDocumentAttachment(undefined), [setDocumentAttachment]);
-  const forgetDocumentContext = useCallback(() => setActiveSession(current => ({ ...current, activeDocumentContext: undefined })), [setActiveSession]);
+  }, []);
+  const onMenuSelect = useCallback((action: PlusAction) => {
+    if (action === 'camera') void openCamera();
+    else if (action === 'think') {
+      setThinkHarder(appStore.get().reasoningMode === 'default'); haptic('selection');
+      setTimeout(closeMenu, 180);
+    } else void chooseAttachment(action);
+  }, [chooseAttachment, closeMenu, openCamera]);
+  const cameraGhost = useMemo(() => <View style={{ width: PLUS_MENU_WIDTH }}><PlusMenuRows live={false} interactive={false} thinkHarder={thinkHarder} /></View>, [thinkHarder]);
+  const cameraPalette = useMemo(() => ({ surface: c.surface }), [c.surface]);
 
-  const renderAnswer = (turn: Turn) => {
-    const legacySample = turn.id.startsWith('sample-') && !turn.liveActivity;
-    const answer = legacySample
-      ? (locale === 'de' ? 'Diese gespeicherte Lernaktivität stammt aus einer früheren Version.' : 'This saved study activity comes from an earlier version.')
-      : turn.answer.trim() || getLegacyActivityText(turn);
-    const rich = legacySample ? undefined : turn.rich;
-    const hasAnswerContent = Boolean(answer || rich);
-    const saveQuiz = (update: (quiz: Extract<NonNullable<Turn['rich']>, { type: 'quiz' }>) => Extract<NonNullable<Turn['rich']>, { type: 'quiz' }>) => updateTurnById(turn.id, current => current.rich?.type === 'quiz' ? { ...current, rich: update(current.rich) } : current);
-    const validatedQuiz = rich?.type === 'quiz' ? validateQuizCardData({ questions: rich.questions }) : undefined;
-    return <View key={turn.id}>
-      <View style={{ alignItems: 'flex-end', paddingHorizontal: 20, paddingTop: 10 }}><View style={{ backgroundColor: c.user, maxWidth: '84%', borderRadius: 19, paddingHorizontal: 12, paddingVertical: 11 }}>
-        {turn.imageAttachment ? <Image source={{ uri: turn.imageAttachment.uri }} accessibilityLabel={locale === 'de' ? 'Angehängtes Bild' : 'Attached image'} resizeMode="cover" style={{ width: 188, height: 142, borderRadius: 12, marginBottom: 8 }} /> : null}
-        {turn.documentAttachment ? <View accessible accessibilityLabel={turn.documentAttachment.name} style={{ width: '100%', maxWidth: '100%', minWidth: 0, alignSelf: 'stretch', minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 12, backgroundColor: c.surface }}><View style={{ width: 28, height: 28, flexShrink: 0, alignItems: 'center', justifyContent: 'center' }}><Feather name="file-text" size={17} color={c.accent} /></View><Text numberOfLines={1} ellipsizeMode="middle" style={{ flex: 1, minWidth: 0, flexShrink: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{turn.documentAttachment.name}</Text></View> : null}
-        <Text selectable style={{ color: c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 23 }}>{turn.prompt}</Text></View></View>
-      {hasAnswerContent ? <View style={{ marginTop: 20, marginBottom: 28, paddingHorizontal: 20 }}>
-        {turn.documentInfo?.truncated ? <View accessibilityLiveRegion="polite" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 10, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 12, backgroundColor: c.raised }}><Feather name="info" size={15} color={c.accent} style={{ marginTop: 2 }} /><Text style={{ flex: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{turn.documentInfo.pagesRead && turn.documentInfo.pagesTotal
-          ? (locale === 'de' ? `Es wurde nur ein Teil der Datei gelesen: ${turn.documentInfo.characters} Zeichen; ${turn.documentInfo.pagesRead} von ${turn.documentInfo.pagesTotal} Seiten. Um den Rest zu besprechen, füge einen kürzeren oder extrahierten Abschnitt hinzu.` : `Only part of this file was read: ${turn.documentInfo.characters} characters; ${turn.documentInfo.pagesRead} of ${turn.documentInfo.pagesTotal} pages. To discuss the rest, attach a shorter file or an extracted section.`)
-          : (locale === 'de' ? 'Es wurden nur die ersten 24.000 Zeichen der Datei gelesen. Um den Rest zu besprechen, füge einen kürzeren oder extrahierten Abschnitt hinzu.' : 'Only the first 24,000 characters of this file were read. To discuss the rest, attach a shorter file or an extracted section.')}</Text></View> : null}
-        {answer ? <View accessibilityLabel={t.assistantLabel}><ReadableMessage text={answer} palette={c} /></View> : null}
-        {rich?.type === 'generated_image' ? <GeneratedImage image={rich} palette={c} locale={turn.locale} showNotice={showNotice} /> : null}
-        {rich?.type === 'quiz' && validatedQuiz?.ok ? <QuizCard data={validatedQuiz.data} currentIndex={rich.currentIndex} answers={rich.answers} completed={rich.completed} onAnswerChange={(questionId, choiceId) => saveQuiz(quiz => ({ ...quiz, answers: { ...quiz.answers, [questionId]: choiceId } }))} onIndexChange={currentIndex => saveQuiz(quiz => ({ ...quiz, currentIndex }))} onComplete={() => saveQuiz(quiz => ({ ...quiz, completed: true }))} palette={{ text: c.text, muted: c.muted, surface: c.canvas, line: c.line, accent: c.accent, correct: '#6CCB8A', incorrect: '#EF7777' }} /> : null}
-        {answer ? <>
-          <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-            <Pressable onPress={() => void copyAnswer(answer)} accessibilityRole="button" accessibilityLabel={t.copy} style={{ minWidth: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' }}><Feather name={busyCopy ? 'check' : 'copy'} size={17} color={c.muted} /></Pressable>
-            <Pressable onPress={() => void readAloud(turn.id, answer, turn.locale)} accessibilityRole="button" accessibilityLabel={speakingTurnId === turn.id ? (locale === 'de' ? 'Vorlesen anhalten' : 'Stop read aloud') : (locale === 'de' ? 'Vorlesen' : 'Read aloud')} accessibilityState={{ selected: speakingTurnId === turn.id }} style={{ minWidth: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' }}><Feather name={speakingTurnId === turn.id ? 'volume-x' : 'volume-2'} size={18} color={c.muted} /></Pressable>
-            <Pressable onPress={() => setMoreTurnId(current => current === turn.id ? null : turn.id)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Weitere Antwortaktionen' : 'More answer actions'} accessibilityState={{ expanded: moreTurnId === turn.id }} style={{ minWidth: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' }}><Feather name="more-vertical" size={18} color={c.muted} /></Pressable>
-          </View>
-          {moreTurnId === turn.id ? <View style={{ alignSelf: 'flex-start', minWidth: 210, marginTop: 3, backgroundColor: c.raised, borderRadius: 16, padding: 6 }}>
-            <Pressable onPress={() => { setMoreTurnId(null); void shareText(answer); }} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 12, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 11 }}><Feather name="share" size={16} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Antwort teilen' : 'Share answer'}</Text></Pressable>
-            {conversation.at(-1)?.id === turn.id && turn.status === 'complete' && !turn.imageAttachment && !turn.rich && !turn.id.startsWith('sample-') && !turn.liveActivity && !turn.liveProgress && turn.prompt.trim() && turn.answer.trim() && !draft.trim() && !imageAttachment ? <Pressable disabled={requestStatus === 'loading'} onPress={() => regenerateTurn(turn)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Antwort neu generieren' : 'Regenerate answer'} accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 44, borderRadius: 12, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 11, opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="rotate-cw" size={16} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Neu generieren' : 'Regenerate'}</Text></Pressable> : null}
-          </View> : null}
-        </> : null}
-      </View> : null}
-      {isRegeneratingTurn(requestRef.current, turn.id, requestStatus === 'loading') ? <View accessibilityLiveRegion="polite" style={{ marginTop: 12, marginBottom: 18, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{locale === 'de' ? 'Antwort wird neu generiert…' : 'Regenerating response…'}</Text></View> : null}
-      {turn.status === 'streaming' ? <View accessibilityLiveRegion="polite" style={{ marginTop: 15, marginBottom: 24, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 10 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{t.thinking}</Text></View> : null}
-      {turn.status === 'stopped' || turn.status === 'failed' ? <View style={{ marginHorizontal: 20, marginTop: 10, marginBottom: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text style={{ flex: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 13 }}>{turn.requestError ? errorText(locale, turn.requestError) : turn.status === 'stopped' ? (locale === 'de' ? 'Antwort angehalten' : 'Response stopped') : (locale === 'de' ? 'Antwort konnte nicht geladen werden' : 'Couldn’t get a response')}{!turn.requestError?.startsWith('document_') && !retryableRequestForTurn(turn.id) && turn.status === 'failed' ? (locale === 'de' ? ' · Erneut versuchen nicht mehr verfügbar' : ' · Retry is no longer available') : ''}</Text>
-        {retryableRequestForTurn(turn.id) ? <Pressable disabled={requestStatus === 'loading'} onPress={() => retryRequest(turn.id)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Diese Nachricht erneut senden' : 'Retry this message'} accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 44, paddingHorizontal: 11, borderRadius: 14, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Text style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 13 }}>{locale === 'de' ? 'Erneut' : 'Retry'}</Text></Pressable> : null}
-      </View> : null}
-    </View>;
-  };
+  // ---- Keyboard, app state and the back button.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', event => {
+      setKeyboardVisible(true);
+      keyboardBounds.current = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => { keyboardBounds.current = null; keyboardScrim?.hide(); setKeyboardVisible(false); composerRef.current?.blur(); });
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+  useEffect(() => {
+    if (dialOpen && keyboardVisible && keyboardBounds.current) keyboardScrim?.show(keyboardBounds.current.top, keyboardBounds.current.height, DIAL_SCRIM);
+    else keyboardScrim?.hide();
+    return () => keyboardScrim?.hide();
+  }, [dialOpen, keyboardVisible]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state !== 'active') { keyboardScrim?.hide(); return; }
+      if (!menuSheetOpen) { menuProgress.value = 0; setMenuVisible(false); setMenuInteractive(false); }
+      if (dialOpen && keyboardVisible && keyboardBounds.current) keyboardScrim?.show(keyboardBounds.current.top, keyboardBounds.current.height, DIAL_SCRIM);
+    });
+    return () => sub.remove();
+  }, [dialOpen, keyboardVisible, menuProgress, menuSheetOpen]);
+  useEffect(() => () => { keyboardScrim?.hide(); stopSpeech(); }, []);
+  const firstScroll = useRef(true);
+  useEffect(() => { syncRequestWithActiveChat(); blankSpace.value = 0; firstScroll.current = true; }, [activeChatId, blankSpace]);
+  useFocusEffect(useCallback(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (cameraOpen) return cameraSheetRef.current?.handleBack() ?? true;
+      if (dialOpen) { setDialOpen(false); return true; }
+      if (menuSheetOpen || menuVisible) { closeMenu(); return true; }
+      if (drawerOpen) { closeDrawer(); return true; }
+      if (chatUi.get().editingTurnId) { cancelEdit(); return true; }
+      if (keyboardVisible) { Keyboard.dismiss(); return true; }
+      return false;
+    });
+    return () => sub.remove();
+  }, [cameraOpen, closeDrawer, closeMenu, dialOpen, drawerOpen, keyboardVisible, menuSheetOpen, menuVisible]));
 
-  return <GestureDetector gesture={edgeGesture}><SafeAreaView style={rootStyle} edges={['top', 'left', 'right']}>
-    <View ref={dialOverlayBoundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0} accessibilityElementsHidden={cameraOpen} importantForAccessibility={cameraOpen ? 'no-hide-descendants' : 'auto'}>
-        <View ref={attachmentBoundsRef} style={{ flex: 1 }}>
-          <View style={{ height: HEADER_HEIGHT, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Pressable onPress={openDrawer} accessibilityRole="button" accessibilityLabel={t.menu} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="menu" size={20} color={c.text} /></Pressable>
-            <View style={{ flex: 1 }} />
-            <Pressable onPress={() => setChatActionsOpen(value => !value)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen' : 'Chat actions'} accessibilityState={{ expanded: chatActionsOpen }} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="more-vertical" size={20} color={c.text} /></Pressable>
-          </View>
-          {isEmpty ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: keyboardVisible ? 0 : 65, paddingHorizontal: 24 }}>
-            {!keyboardVisible ? <><Text style={{ width: '100%', color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 26, lineHeight: 34, textAlign: 'center', marginBottom: 9 }}>{t.greeting}</Text><Text style={{ width: '100%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, textAlign: 'center' }}>{t.greetingHint}</Text></> : null}
-          </View> : <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 18 }} keyboardShouldPersistTaps="handled" onScroll={event => { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; followsBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 128; }} scrollEventThrottle={80} onContentSizeChange={(_w, h) => { if (followsBottom.current) scrollRef.current?.scrollTo({ y: Math.max(0, h), animated: false }); }}>
-            {conversation.map(renderAnswer)}
-          </ScrollView>}
-          <View style={{ paddingHorizontal: 22, paddingTop: 6, paddingBottom: Math.max(insets.bottom, keyboardVisible ? 45 : 8) + (keyboardVisible ? 0 : 3) }}>
-            {showGlobalRequestError && requestError ? <View accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 44, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 14, backgroundColor: c.raised, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={{ flex: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{requestErrorMessage}</Text>
-              {!requestError.startsWith('document_') ? <Pressable disabled={!retryAllowed} onPress={() => retryRequest()} accessibilityRole="button" accessibilityState={{ disabled: !retryAllowed }} style={{ minHeight: 38, paddingHorizontal: 8, justifyContent: 'center', opacity: retryAllowed ? 1 : 0.45 }}><Text style={{ color: c.accent, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{locale === 'de' ? 'Erneut' : 'Retry'}</Text></Pressable> : null}
-              <Pressable onPress={() => { setRequestStatus('idle'); setRequestError(null); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Hinweis schließen' : 'Dismiss message'} style={{ width: 30, height: 36, alignItems: 'center', justifyContent: 'center' }}><Feather name="x" size={16} color={c.muted} /></Pressable>
-            </View> : null}
-            {legacyRequestPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 8, marginBottom: 7, minHeight: 40, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: c.raised }}><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
-            <View style={{ backgroundColor: reasoningDialOpen ? 'transparent' : c.surface, borderColor: reasoningDialOpen ? 'transparent' : c.line, borderWidth: reasoningDialOpen ? 0 : 1, borderRadius: 28, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 5 }}>
-              {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ marginHorizontal: 8, marginBottom: 5, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15 }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Wähle es im Menü, um das Bild zu senden.' : 'Image requests need Default. Choose it in the menu to send this image.'}</Text> : null}
-              {imageAttachment ? <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingTop: 3, paddingBottom: 7 }}>
-                <Image source={{ uri: imageAttachment.uri }} accessibilityLabel={locale === 'de' ? 'Bild im Entwurf' : 'Image in draft'} resizeMode="cover" style={{ width: 58, height: 58, borderRadius: 11 }} />
-                <Text numberOfLines={1} style={{ flex: 1, marginLeft: 10, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 12 }}>{imageAttachment.name}</Text>
-                <Pressable onPress={removeImageAttachment} disabled={requestStatus === 'loading'} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Bild entfernen' : 'Remove image'} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="x" size={18} color={c.muted} /></Pressable>
-              </View> : null}
-              {documentAttachment ? <View style={{ width: '100%', maxWidth: '100%', minWidth: 0, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingTop: 3, paddingBottom: 7, minHeight: 54 }}>
-                <View style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 11, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name="file-text" size={18} color={c.accent} /></View>
-                <View style={{ flex: 1, minWidth: 0, flexShrink: 1, marginLeft: 10 }}><Text numberOfLines={1} ellipsizeMode="middle" style={{ minWidth: 0, flexShrink: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 12 }}>{documentAttachment.name}</Text><Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2 }}>{documentAttachment.mimeType === 'application/pdf' ? 'PDF' : documentAttachment.mimeType === 'text/markdown' ? 'Markdown' : 'Text'} · {(documentAttachment.sizeBytes / 1024 / 1024).toFixed(1)} MiB</Text></View>
-                <Pressable onPress={removeDocumentAttachment} disabled={requestStatus === 'loading'} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Datei entfernen' : 'Remove file'} style={{ width: 44, height: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center', opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="x" size={18} color={c.muted} /></Pressable>
-              </View> : null}
-              <View style={{ minHeight: 44, maxHeight: 136, flexDirection: 'row', alignItems: draft.includes('\n') ? 'flex-end' : 'center', gap: 4 }}>
-                <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
-                {/* iOS appends the placeholder to a text input's label, so there the placeholder alone names it (no "Message Daimon Message Daimon"). */}
-                <TextInput ref={inputRef} value={draft} onChangeText={setDraft} keyboardAppearance={theme} placeholder={reasoningMode === 'default' ? t.composer : locale === 'de' ? 'Nachricht' : 'Message'} placeholderTextColor={reasoningDialOpen ? 'transparent' : c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={Platform.OS === 'ios' ? undefined : t.composer} selectionColor={reasoningDialOpen ? 'transparent' : c.accent} style={{ flex: 1, color: reasoningDialOpen ? 'transparent' : c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
-                <Pressable onPress={openReasoningDial} onLongPress={reasoningMode !== 'default' ? () => { void Haptics.selectionAsync().catch(() => undefined); setReasoningMode('default'); } : undefined} accessibilityRole="button" accessibilityLabel={`${locale === 'de' ? 'Denkstufe' : 'Thinking dial'}: ${reasoningModeLabel}`} accessibilityHint={reasoningMode !== 'default' ? (locale === 'de' ? 'Gedrückt halten, um die Denkstufe zurückzusetzen.' : 'Long press to clear the thinking mode.') : undefined} accessibilityActions={reasoningMode !== 'default' ? [{ name: 'default', label: locale === 'de' ? 'Denkmodus zurücksetzen' : 'Clear thinking mode' }] : undefined} onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'default') setReasoningMode('default'); }} accessibilityState={{ selected: reasoningMode !== 'default' }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><ReasoningGauge mode={reasoningMode} theme={theme} /></Pressable>
-                {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
-              </View>
-            </View>
-          </View>
-          {chatActionsOpen ? <View pointerEvents="box-none" style={{ position: 'absolute', zIndex: 80, elevation: 18, left: 0, right: 0, top: 0, bottom: 0 }}>
-            <Pressable onPress={() => setChatActionsOpen(false)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen schließen' : 'Close chat actions'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
-            <View style={{ position: 'absolute', top: 56, right: 12, minWidth: 220, backgroundColor: c.raised, borderRadius: 18, padding: 7, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }}>
-              <Pressable disabled={requestStatus === 'loading'} onPress={() => { setChatActionsOpen(false); newChat(); }} accessibilityRole="button" accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="edit-3" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.newChat}</Text></Pressable>
-              {reasoningMode !== 'default' ? <Pressable onPress={() => { setReasoningMode('default'); setChatActionsOpen(false); }} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'} accessibilityState={{ selected: false }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="rotate-ccw" size={17} color={c.accent} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Standardmodell verwenden' : 'Use default model'}</Text></Pressable> : null}
-              <Pressable disabled={!conversation.length} onPress={shareConversation} accessibilityRole="button" accessibilityState={{ disabled: !conversation.length }} style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: conversation.length ? 1 : 0.45 }}><Feather name="share" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{locale === 'de' ? 'Transkript teilen' : 'Share transcript'}</Text></Pressable>
-              {activeSession.activeDocumentContext ? <Pressable onPress={() => { forgetDocumentContext(); setChatActionsOpen(false); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="file-minus" size={17} color={c.text} /><Text numberOfLines={1} style={{ flex: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{locale === 'de' ? 'Dateikontext entfernen' : 'Forget document context'}</Text></Pressable> : null}
-              <Pressable onPress={() => { setChatActionsOpen(false); openSettings(); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}><Feather name="settings" size={17} color={c.text} /><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.profile}</Text></Pressable>
-            </View>
-          </View> : null}
-          {attachmentMenuVisible ? <View pointerEvents="auto" accessibilityElementsHidden={!attachmentSheetOpen} importantForAccessibility={attachmentSheetOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentSheetOpen} style={{ position: 'absolute', zIndex: 100, elevation: 24, left: 0, right: 0, top: 0, bottom: 0 }}>
-            <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, attachmentBackdropStyle]} />
-            <Pressable accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhangmenü schließen' : 'Dismiss attachment menu'} onPress={closeAttachmentMenu} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
-            <Animated.View style={[{ position: 'absolute', borderRadius: 22, shadowColor: '#000', shadowRadius: 15, shadowOffset: { width: 0, height: 7 } }, attachmentCardStyle]}>
-              <View accessibilityViewIsModal={attachmentMenuInteractive} accessibilityElementsHidden={!attachmentMenuInteractive} importantForAccessibility={attachmentMenuInteractive ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentMenuInteractive} style={{ flex: 1, backgroundColor: 'transparent', borderRadius: 22, overflow: 'hidden', paddingHorizontal: 12, paddingVertical: 8 }}>
-                <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }, attachmentPlusStyle]}><Feather name="plus" size={23} color={c.muted} /></Animated.View>
-                <Animated.View pointerEvents={attachmentMenuInteractive ? 'auto' : 'none'} style={[{ flex: 1 }, attachmentContentStyle]}>
-                  {attachmentRows(true)}
-                </Animated.View>
-              </View>
-            </Animated.View>
-          </View> : null}
-        </View>
-      </KeyboardAvoidingView>
+  const newChat = useCallback(() => { track('chat_new', { fromTurns: appStore.get().conversation.length }); startNewChat(); closeDrawer(); Keyboard.dismiss(); haptic('light'); }, [closeDrawer]);
+
+  // ---- Scrolling: chats open at the end; a sent message is lifted under the header with room below for the answer.
+  const viewport = useRef(0);
+  const onScrollLayout = useCallback((event: LayoutChangeEvent) => { viewport.current = event.nativeEvent.layout.height; }, []);
+  const topPadding = insets.top + HEADER_HEIGHT + 4;
+  const onContentSize = useCallback(() => {
+    if (!firstScroll.current) return;
+    firstScroll.current = false;
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
+  }, []);
+
+  // Plain JS callback: a worklet must not capture RN's Keyboard object (Worklets can't copy it and the app crashes).
+  const settledByDrag = useCallback((open: boolean) => { setDrawerOpen(open); if (open) Keyboard.dismiss(); }, []);
+  const drawerGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetX(drawerOpen ? -14 : 14).failOffsetY([-12, 12])
+    .enabled(!cameraOpen && !dialOpen && !menuVisible)
+    .onStart(() => { dragStart.value = drawer.value; })
+    .onUpdate(event => { drawer.value = Math.min(1, Math.max(0, dragStart.value + event.translationX / drawerWidth)); })
+    .onEnd(event => {
+      const open = event.velocityX > 450 ? true : event.velocityX < -450 ? false : drawer.value > 0.5;
+      drawer.value = withSpring(open ? 1 : 0, { ...motion.settle, velocity: event.velocityX / drawerWidth });
+      runOnJS(settledByDrag)(open);
+    }), [cameraOpen, dialOpen, drawer, drawerOpen, drawerWidth, dragStart, menuVisible, settledByDrag]);
+  const chatStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drawer.value * drawerWidth }] }));
+  const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: (drawer.value - 1) * drawerWidth * 0.25 }], opacity: 0.4 + drawer.value * 0.6 }));
+  // A shut drawer leaves the view tree (display none): otherwise its buttons still take keyboard focus, and a Space
+  // typed while nothing is focused "clicked" the hidden Search button.
+  const [drawerShown, setDrawerShown] = useState(false);
+  useAnimatedReaction(() => drawer.value > 0.001, (shown, previous) => { if (shown !== previous) runOnJS(setDrawerShown)(shown); });
+  const dimStyle = useAnimatedStyle(() => ({ opacity: drawer.value * (mode === 'dark' ? 0.55 : 0.3) }), [mode]);
+
+  const fabStyle = useAnimatedStyle(() => {
+    const shown = atEnd.value ? 0 : 1;
+    return {
+      opacity: withTiming(shown, { duration: 160 }),
+      transform: [{ scale: withTiming(shown ? 1 : 0.92, { duration: 160 }) }],
+      bottom: composerHeight.value - keyboard.height.value - keyboard.progress.value * insets.bottom + 12,
+    };
+  }, [insets.bottom]);
+  const greetingStyle = useAnimatedStyle(() => ({ transform: [{ translateY: (keyboard.height.value + keyboard.progress.value * insets.bottom) / 2 }] }), [insets.bottom]);
+  const dialPosition = useAnimatedStyle(() => ({ bottom: composerHeight.value - keyboard.height.value - keyboard.progress.value * insets.bottom + 6 }), [insets.bottom]);
+
+  const showGlobalError = shouldShowGlobalChatError(currentRequest(), requestStatus === 'error' && Boolean(requestError));
+  const effortLabels = useMemo(() => ({ instant: t.effortLabel.instant, medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: t.effortWord, chooseEffort: t.chooseEffort }), [locale, t]);
+
+  // The drawer gesture covers both panels, so an open drawer can also be swiped shut from the drawer itself.
+  return <GestureDetector gesture={drawerGesture}><View style={{ flex: 1, backgroundColor: c.drawer }}>
+    <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, width: drawerWidth, display: drawerShown ? 'flex' : 'none' }, drawerStyle]} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}>
+      <ChatDrawer width={drawerWidth} topInset={insets.top} bottomInset={insets.bottom} onClose={closeDrawer} onNewChat={newChat} busy={requestStatus === 'loading'} />
+    </Animated.View>
+    <Animated.View style={[{ flex: 1, backgroundColor: c.canvas, overflow: 'hidden' }, chatStyle]}>
+      <View ref={boundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen || cameraOpen} importantForAccessibility={drawerOpen || cameraOpen ? 'no-hide-descendants' : 'auto'}>
+        {isEmpty ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 24, right: 24, top: topPadding, bottom: 140, alignItems: 'center', justifyContent: 'center' }, greetingStyle]}>
+          <Animated.Text key={activeChatId} entering={reducedMotion ? undefined : FadeIn.duration(360).delay(60)} style={{ ...type.display, color: c.text, textAlign: 'center' }}>{t.greeting}</Animated.Text>
+        </Animated.View> : null}
+        <KeyboardChatScrollView ref={scrollRef} keyboardLiftBehavior="whenAtEnd" offset={insets.bottom} extraContentPadding={composerHeight} blankSpace={blankSpace}
+          onEndVisible={visible => { 'worklet'; atEnd.value = visible; }} onLayout={onScrollLayout} onContentSizeChange={onContentSize}
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+          <Turns topPadding={topPadding} viewport={viewport} blankSpace={blankSpace} scrollRef={scrollRef} />
+        </KeyboardChatScrollView>
+        <ChatHeader topInset={insets.top} onMenu={openDrawer} onNewChat={newChat} />
+        <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', alignSelf: 'center', zIndex: 5 }, fabStyle]}>
+          <IconButton label={t.scrollToBottom} size={38} variant="surface" onPress={() => scrollRef.current?.scrollToEnd({ animated: true })} style={{ borderWidth: 1, borderColor: c.line }}>
+            <Icon name="arrow-down" size={19} color={c.text} />
+          </IconButton>
+        </Animated.View>
+        <StickyComposer bottomInset={insets.bottom} height={composerHeight}>
+          {showGlobalError && requestError ? <Animated.View entering={FadeIn} exiting={FadeOut} accessibilityLiveRegion="polite" style={{ marginHorizontal: 16, marginBottom: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ ...type.helper, flex: 1, color: c.muted }}>{errorText(locale, requestError)}</Text>
+            {!requestError.startsWith('document_') ? <PressableScale onPress={() => retryRequest()} accessibilityRole="button" style={{ minHeight: 36, paddingHorizontal: 8, justifyContent: 'center' }}><Text style={{ ...type.label, fontSize: 13, color: c.accent }}>{t.retry}</Text></PressableScale> : null}
+            <IconButton label={t.cancel} size={30} onPress={dismissRequestError}><Icon name="x" size={16} color={c.muted} /></IconButton>
+          </Animated.View> : null}
+          {legacyPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 16, backgroundColor: c.surface }}><Text style={{ ...type.helper, color: c.muted }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
+          <Composer ref={composerRef} plusRef={plusRef} onPlus={openMenu} onOpenDial={() => { haptic('selection'); setDialOpen(true); }} plusOpen={menuSheetOpen} dialOpen={dialOpen} bottomInset={insets.bottom} />
+        </StickyComposer>
+        {menuVisible ? <PlusMenu sheetOpen={menuSheetOpen} interactive={menuInteractive} thinkHarder={thinkHarder} progress={menuProgress} originLeft={originLeft} originTop={originTop} targetTop={targetTop} handoff={handoff} covering={covering} onClose={closeMenu} onSelect={onMenuSelect} /> : null}
+      </View>
       {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
-      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} /> : null}
-    </View>
-
-    {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityViewIsModal onAccessibilityEscape={closeReasoningDial} accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
-      <Pressable onPress={closeReasoningDial} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000066' }} />
-      <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? dialKeyboardBottomOffset : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
-        <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={{ instant: locale === 'de' ? 'Sofort' : 'Instant', medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: locale === 'de' ? 'Aufwand' : 'effort', chooseEffort: locale === 'de' ? 'Denkaufwand wählen' : 'Choose effort' }} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
-        {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ width: '84%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8, textAlign: 'center' }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Schließe den Regler und wähle es im Menü; dein Bild bleibt im Entwurf.' : 'Image requests need the default model. Close this dial and choose it in the menu; your image stays in the draft.'}</Text> : null}
+      <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={insets.top + HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} />
+      {dialOpen && !menuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityViewIsModal onAccessibilityEscape={() => setDialOpen(false)} style={{ position: 'absolute', zIndex: 110, elevation: 26, inset: 0 }}>
+        <Pressable onPress={() => setDialOpen(false)} accessibilityRole="button" accessibilityLabel={t.closeDial} style={{ position: 'absolute', inset: 0, backgroundColor: '#00000073' }} />
+        <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, alignItems: 'center' }, dialPosition]}>
+          <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(220).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150)} style={{ alignItems: 'center', width: '100%' }}>
+            <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={effortLabels} />
+            {hasAttachment && reasoningMode !== 'default' ? <Text style={{ ...type.helper, width: '84%', color: cosmos.hud.muted, marginTop: 8, textAlign: 'center' }}>{errorText(locale, 'reasoning_image_unsupported')}</Text> : null}
+          </Animated.View>
+        </Animated.View>
+      </Animated.View> : null}
+      <Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim, zIndex: 200 }, dimStyle]}>
+        <Pressable style={{ flex: 1 }} onPress={closeDrawer} accessibilityRole="button" accessibilityLabel={t.cancel} />
       </Animated.View>
-    </Animated.View> : null}
-
-    <Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!drawerOpen} style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#000000' }, backdropStyle]}><Pressable onPress={closeDrawer} accessibilityLabel={t.close} accessibilityRole="button" style={{ flex: 1, marginLeft: drawerWidth }} /></Animated.View>
-    <GestureDetector gesture={drawerGesture}><Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} accessibilityViewIsModal={drawerOpen} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!drawerOpen} style={[{ position: 'absolute', top: 0, bottom: 0, left: 0, width: drawerWidth, backgroundColor: theme === 'dark' ? '#0D0D0D' : '#F7F7F5', paddingTop: insets.top + 10, paddingBottom: insets.bottom + 10 }, drawerStyle]}>
-      <View style={{ paddingHorizontal: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 62 }}>
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, marginRight: 12, color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 25 }}>{profileOpen ? t.profileTitle : t.drawerTitle}</Text>
-        {profileOpen ? <Pressable onPress={() => setProfileOpen(false)} accessibilityRole="button" accessibilityLabel={t.back} style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}><Feather name="arrow-left" size={21} color={c.text} /></Pressable> : <Pressable onPress={() => setSearchOpen(value => !value)} accessibilityRole="button" accessibilityLabel={t.search} style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="search" size={20} color={c.text} /></Pressable>}
-      </View>
-      {!profileOpen && searchOpen ? <View style={{ marginHorizontal: 20, marginBottom: 9, height: 48, borderRadius: 15, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13 }}><Feather name="search" size={17} color={c.muted} /><TextInput keyboardAppearance={theme} value={query} onChangeText={setQuery} placeholder={t.searchPlaceholder} placeholderTextColor={c.faint} accessibilityLabel={t.searchPlaceholder} autoFocus style={{ marginLeft: 9, color: c.text, flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14 }} /></View> : null}
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }} style={{ flex: 1 }}>
-        {profileOpen ? <>
-          <Text style={{ color: c.muted, fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 19, marginBottom: 8, paddingHorizontal: 9 }}>{t.theme}</Text>
-          <View style={{ flexDirection: 'row', backgroundColor: c.surface, borderRadius: 16, padding: 4, gap: 3 }}>{(['dark', 'light'] as ThemeMode[]).map(mode => <Pressable key={mode} onPress={() => setTheme(mode)} accessibilityRole="button" accessibilityLabel={mode === 'dark' ? t.dark : t.light} accessibilityState={{ selected: theme === mode }} style={{ flex: 1, minHeight: 48, borderRadius: 13, backgroundColor: theme === mode ? c.selected : 'transparent', justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{mode === 'dark' ? t.dark : t.light}</Text></Pressable>)}</View>
-          <Text style={{ color: c.muted, fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 25, marginBottom: 8, paddingHorizontal: 9 }}>{t.language}</Text>
-          <View style={{ flexDirection: 'row', backgroundColor: c.surface, borderRadius: 16, padding: 4, gap: 3 }}>{(['en', 'de'] as Locale[]).map(code => <Pressable key={code} onPress={() => setLocale(code)} accessibilityRole="button" accessibilityLabel={code === 'en' ? t.english : t.german} accessibilityState={{ selected: locale === code }} style={{ flex: 1, minHeight: 48, borderRadius: 13, backgroundColor: locale === code ? c.selected : 'transparent', justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 14 }}>{code === 'en' ? t.english : t.german}</Text></Pressable>)}</View>
-        </> : <>
-          <Pressable disabled={requestStatus === 'loading'} onPress={newChat} accessibilityRole="button" accessibilityLabel={t.newChat} accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 52, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 18, opacity: requestStatus === 'loading' ? 0.55 : 1 }}><Feather name="edit-3" size={21} color={c.accent} /><Text style={{ flex: 1, color: c.text, fontFamily: 'Inter_500Medium', fontSize: 15 }}>{t.newChat}</Text></Pressable>
-          <Text style={{ color: c.muted, fontFamily: 'Inter_500Medium', fontSize: 14, marginTop: 24, marginBottom: 7, paddingHorizontal: 10 }}>{t.recents}</Text>
-          {showCurrent ? <Pressable key={activeChatId} onPress={closeDrawer} accessibilityRole="button" style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 14 }}><Text numberOfLines={1} style={{ flex: 1, minWidth: 0, flexShrink: 1, color: c.text, fontFamily: 'Inter_400Regular', fontSize: 14 }}>{currentTitle}</Text><View style={{ width: 6, height: 6, borderRadius: 3, flexShrink: 0, backgroundColor: c.accent }} /></Pressable> : null}
-          {filteredSaved.map(saved => <Pressable key={saved.id} disabled={requestStatus === 'loading'} onPress={() => { openSavedConversation(saved.id); setDrawerOpen(false); }} accessibilityRole="button" accessibilityState={{ disabled: requestStatus === 'loading' }} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 14, opacity: requestStatus === 'loading' ? 0.5 : 1 }}><Text numberOfLines={1} style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14, flex: 1, minWidth: 0, flexShrink: 1 }}>{saved.title || (locale === 'de' ? 'Unterhaltung' : 'Conversation')}</Text></Pressable>)}
-          {!showCurrent && !filteredSaved.length ? <Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14, paddingHorizontal: 10, paddingVertical: 12 }}>{t.noResults}</Text> : null}
-        </>}
-      </ScrollView>
-      <View style={{ paddingHorizontal: 19, paddingTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Pressable onPress={closeDrawer} accessibilityRole="button" accessibilityLabel={t.chat} style={{ width: 136, minHeight: 48, paddingHorizontal: 16, borderRadius: 25, backgroundColor: c.accent, flexDirection: 'row', gap: 8, justifyContent: 'center', alignItems: 'center' }}><Feather name="message-circle" size={16} color="#17101F" /><Text style={{ width: 60, minWidth: 60, flexShrink: 0, textAlign: 'center', color: '#17101F', fontFamily: 'Inter_600SemiBold', fontSize: 15 }}>{t.chat}</Text></Pressable>
-        <Pressable onPress={() => { setProfileOpen(value => !value); setSearchOpen(false); }} accessibilityRole="button" accessibilityLabel={t.profile} style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name={profileOpen ? 'x' : 'user'} size={20} color={c.text} /></Pressable>
-      </View>
-    </Animated.View></GestureDetector>
-    {notice ? <View pointerEvents="none" style={{ position: 'absolute', bottom: Math.max(insets.bottom, 12) + 72, alignSelf: 'center', backgroundColor: c.raised, paddingHorizontal: 16, paddingVertical: 11, borderRadius: 18 }}><Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 13 }}>{notice}</Text></View> : null}
-    {hydrationStatus !== 'ready' ? <View accessibilityViewIsModal style={{ position: 'absolute', zIndex: 1000, elevation: 20, left: 0, right: 0, top: 0, bottom: 0, backgroundColor: c.canvas, paddingHorizontal: 28, paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24, justifyContent: 'center', alignItems: 'center' }}>
-      {hydrationStatus === 'loading' ? <><ActivityIndicator color={c.accent} /><Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14, marginTop: 14, textAlign: 'center' }}>{locale === 'de' ? 'Gespeicherte Chats werden geladen …' : 'Loading saved chats …'}</Text></> : <>
-        <Text style={{ color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 19, lineHeight: 26, textAlign: 'center' }}>{locale === 'de' ? 'Gespeicherte Daten konnten nicht geladen werden' : 'Saved data could not be loaded'}</Text>
-        <Text style={{ color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 10 }}>{locale === 'de' ? 'Die gespeicherten Daten wurden nicht ersetzt. Versuche, sie erneut zu laden.' : 'Stored data has not been replaced. Try loading it again.'}</Text>
-        <Pressable onPress={retryHydration} accessibilityRole="button" style={{ marginTop: 18, minHeight: 48, minWidth: 150, paddingHorizontal: 16, borderRadius: 16, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.canvas, fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>{locale === 'de' ? 'Erneut versuchen' : 'Try again'}</Text></Pressable>
-      </>}
-    </View> : null}
-  </SafeAreaView></GestureDetector>;
+    </Animated.View>
+  </View></GestureDetector>;
 }
+
+/** The composer rides the keyboard; its bottom padding (the gesture bar) is given back while the keyboard is up. */
+function StickyComposer({ bottomInset, height, children }: { bottomInset: number; height: SharedValue<number>; children: React.ReactNode }) {
+  const c = usePalette();
+  const keyboard = useReanimatedKeyboardAnimation();
+  const style = useAnimatedStyle(() => ({ transform: [{ translateY: keyboard.height.value + keyboard.progress.value * bottomInset }] }), [bottomInset]);
+  return <Animated.View onLayout={event => { height.value = event.nativeEvent.layout.height; }} pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }, style]}>
+    {/* Answers fade out behind the composer instead of showing through the gap below it. */}
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -COMPOSER_FADE, bottom: 0 }}>
+      <View style={{ height: COMPOSER_FADE + 6, experimental_backgroundImage: `linear-gradient(180deg, ${c.canvas}00 0%, ${c.canvas} 100%)` }} />
+      <View style={{ flex: 1, backgroundColor: c.canvas }} />
+    </View>
+    {children}
+  </Animated.View>;
+}
+const COMPOSER_FADE = 20;
+
+/**
+ * The turns, plus the ChatGPT "lift": a sent message scrolls up to sit under the header and the space below it is
+ * reserved (blankSpace) so the answer appears in view. The reservation shrinks as the answer grows.
+ */
+const Turns = React.memo(function Turns({ topPadding, viewport, blankSpace, scrollRef }: {
+  topPadding: number; viewport: React.RefObject<number>; blankSpace: SharedValue<number>; scrollRef: React.RefObject<Animated.ScrollView | null>;
+}) {
+  const conversation = useApp(state => state.conversation);
+  const pinnedTurnId = useChatUi(state => state.pinnedTurnId);
+  const fresh = useRef(new Set<string>());
+  const scrolledFor = useRef<string | null>(null);
+  if (pinnedTurnId) fresh.current.add(pinnedTurnId);
+  const last = conversation.at(-1);
+  const onLastLayout = (event: LayoutChangeEvent) => {
+    if (!pinnedTurnId || last?.id !== pinnedTurnId) return;
+    const { y, height } = event.nativeEvent.layout;
+    blankSpace.value = Math.max(0, (viewport.current ?? 0) - topPadding - height - 8);
+    if (scrolledFor.current === pinnedTurnId) return;
+    scrolledFor.current = pinnedTurnId;
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: Math.max(0, y - topPadding), animated: true })));
+  };
+  return <View style={{ paddingTop: topPadding, paddingBottom: 8 }}>
+    {conversation.map(turn => <View key={turn.id} onLayout={turn.id === last?.id ? onLastLayout : undefined}>
+      <TurnView turn={turn} fresh={fresh.current.has(turn.id)} />
+    </View>)}
+  </View>;
+});

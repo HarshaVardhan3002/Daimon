@@ -1,4 +1,4 @@
-import type { Turn } from './AppState';
+import type { Turn } from './types';
 
 /** Update a turn in either the active conversation or an archived chat. */
 export function updateTurnList(turns: Turn[], id: string, update: (turn: Turn) => Turn): Turn[] {

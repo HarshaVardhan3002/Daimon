@@ -5,8 +5,12 @@ appId: ${APP_ID}
 - launchApp:
     stopApp: true
 - extendedWaitUntil:
-    visible: "Add attachment"
+    visible: "Add attachment|Sign in"
     timeout: 60000
+- runFlow:
+    when:
+      visible: "Sign in"
+    file: _sign-in.yaml
 - takeScreenshot: ios-01-home
 - tapOn: "Add attachment"
 - waitForAnimationToEnd
@@ -46,8 +50,7 @@ appId: ${APP_ID}
 - takeScreenshot: ios-11-review
 - tapOn: "Use photo"
 - extendedWaitUntil:
-    visible: "camera.jpg"
+    visible: "Remove image"
     timeout: 15000
-- assertVisible: "Remove image"
 - takeScreenshot: ios-12-photo-attached
 - tapOn: "Remove image"

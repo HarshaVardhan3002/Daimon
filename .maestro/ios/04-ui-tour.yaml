@@ -1,0 +1,52 @@
+# Walks the rebuilt screens for screenshots: home, a failed send (no model proxy runs in CI), message menus,
+# drawer, search, settings, personalization and memory.
+appId: ${APP_ID}
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Add attachment|Sign in"
+    timeout: 60000
+- runFlow:
+    when:
+      visible: "Sign in"
+    file: _sign-in.yaml
+- takeScreenshot: ios-20-home
+- tapOn:
+    id: "composer-input"
+- inputText: "What makes cheese go bitter?"
+- takeScreenshot: ios-21-focused-composer
+- tapOn: "Send message"
+- extendedWaitUntil:
+    visible: "Retry"
+    timeout: 30000
+- hideKeyboard
+- takeScreenshot: ios-22-send-failed
+- longPressOn: "Your message.*"
+- waitForAnimationToEnd
+- takeScreenshot: ios-23-message-menu
+- tapOn: "Copy"
+- tapOn: "Open navigation"
+- waitForAnimationToEnd
+- takeScreenshot: ios-24-drawer
+- tapOn: "Search chats"
+- waitForAnimationToEnd
+- takeScreenshot: ios-25-search
+- tapOn: "Close"
+- waitForAnimationToEnd
+- tapOn: "Profile and settings"
+- waitForAnimationToEnd
+- takeScreenshot: ios-26-settings
+- tapOn: "Personalization"
+- waitForAnimationToEnd
+- takeScreenshot: ios-27-personalization
+- tapOn: "Back"
+- waitForAnimationToEnd
+- tapOn: "Memory"
+- waitForAnimationToEnd
+- takeScreenshot: ios-28-memory
+- tapOn: "Back"
+- waitForAnimationToEnd
+- tapOn: "Back"
+- waitForAnimationToEnd
+- takeScreenshot: ios-29-back-to-chat

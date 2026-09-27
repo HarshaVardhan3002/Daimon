@@ -17,6 +17,9 @@ export type CameraFlowState = {
   capturing: boolean;
   /** Changing this remounts the preview after a start failure. */
   mountKey: number;
+  /** A failed start was already retried silently. Android often fails the very first open right after the
+   *  permission dialog returns; one quiet remount recovers it before any error is shown. */
+  autoRetried: boolean;
   photo?: CapturedPhoto;
   notice?: CameraNotice;
 };
@@ -40,7 +43,7 @@ export type CameraFlowEvent =
   | { type: 'foreground' }
   | { type: 'clearNotice' };
 
-export const initialCameraFlow: CameraFlowState = { session: 0, phase: 'closed', permission: 'unknown', expanded: false, suspended: false, ready: false, capturing: false, mountKey: 0 };
+export const initialCameraFlow: CameraFlowState = { session: 0, phase: 'closed', permission: 'unknown', expanded: false, suspended: false, ready: false, capturing: false, mountKey: 0, autoRetried: false };
 
 export const isCameraMounted = (state: CameraFlowState) => state.phase === 'camera' && !state.suspended;
 export const isPreviewRevealed = (state: CameraFlowState) => isCameraMounted(state) && state.expanded && state.ready;
@@ -65,9 +68,11 @@ export function cameraFlowReducer(state: CameraFlowState, event: CameraFlowEvent
       return state.phase === 'review' || state.phase === 'saving' ? next : { ...next, phase: 'denied', ready: false, capturing: false };
     }
     case 'ready':
-      return state.phase === 'camera' && event.mountKey === state.mountKey && isCameraMounted(state) ? { ...state, ready: true } : state;
+      return state.phase === 'camera' && event.mountKey === state.mountKey && isCameraMounted(state) ? { ...state, ready: true, autoRetried: false } : state;
     case 'mountError':
-      return state.phase === 'camera' && event.mountKey === state.mountKey ? { ...state, phase: 'error', ready: false, capturing: false } : state;
+      if (state.phase !== 'camera' || event.mountKey !== state.mountKey) return state;
+      if (!state.autoRetried) return { ...state, ready: false, capturing: false, mountKey: state.mountKey + 1, autoRetried: true };
+      return { ...state, phase: 'error', ready: false, capturing: false };
     case 'retry':
       return state.phase === 'error' ? { ...state, phase: 'camera', ready: false, mountKey: state.mountKey + 1 } : state;
     case 'remount':

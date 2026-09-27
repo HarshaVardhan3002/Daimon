@@ -5,8 +5,9 @@ import ts from 'typescript';
 
 const modelClientUrl = new URL('../src/chat/modelClient.ts', import.meta.url);
 const quizDataUrl = new URL('../src/chat/quizCardData.ts', import.meta.url).href;
+const lessonDeckUrl = new URL('../src/learning/deck.ts', import.meta.url).href;
 const reasoningEffortUrl = new URL('../src/chat/reasoningEffort.ts', import.meta.url);
-const modelClientSource = (await readFile(modelClientUrl, 'utf8')).replace("from './quizCardData'", `from '${quizDataUrl}'`);
+const modelClientSource = (await readFile(modelClientUrl, 'utf8')).replace("from './quizCardData'", `from '${quizDataUrl}'`).replace("from '../learning/deck'", `from '${lessonDeckUrl}'`);
 const compiledModelClient = ts.transpileModule(modelClientSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const { ChatClientError, sendChatCompletion } = await import(`data:text/javascript;base64,${Buffer.from(compiledModelClient).toString('base64')}`);
 const reasoningSource = await readFile(reasoningEffortUrl, 'utf8');
@@ -80,5 +81,31 @@ test('returns structured proxy document errors for localized app recovery', asyn
     await assert.rejects(sendChatCompletion([{ role: 'user', content: 'Summarize', document: {
       name: 'scan.pdf', mimeType: 'application/pdf', data: Buffer.from('%PDF-1.4').toString('base64'),
     } }]), error => error instanceof ChatClientError && error.code === 'DOCUMENT_NO_TEXT');
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test('validates lesson rich replies against the lesson deck contract', async () => {
+  const previousFetch = globalThis.fetch;
+  const deck = {
+    title: 'Black holes',
+    cards: [
+      { kind: 'idea', id: 'i', title: 'Horizon', body: 'A boundary.' },
+      { kind: 'flip', id: 'f', front: 'Question', back: 'Answer' },
+      { kind: 'swipe', id: 's', statement: 'Light escapes from inside.', isTrue: false, why: 'The horizon blocks escape.' },
+    ],
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    message: { role: 'assistant', content: 'Let us study black holes.', rich: { type: 'lesson', deck } },
+    model: 'test-model', usage: null, finishReason: 'stop',
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const result = await sendChatCompletion([{ role: 'user', content: 'Teach me about black holes.' }]);
+    assert.equal(result.message.rich.type, 'lesson');
+    assert.equal(result.message.rich.deck.cards.length, 3);
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      message: { role: 'assistant', content: 'Study this.', rich: { type: 'lesson', deck: { ...deck, cards: deck.cards.slice(0, 2) } } },
+      model: 'test-model', usage: null, finishReason: 'stop',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    await assert.rejects(sendChatCompletion([{ role: 'user', content: 'Teach me.' }]), error => error.code === 'INVALID_CHAT_RESPONSE');
   } finally { globalThis.fetch = previousFetch; }
 });

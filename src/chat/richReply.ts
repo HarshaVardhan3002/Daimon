@@ -2,9 +2,11 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { RichReply } from './modelClient';
 import type { QuizCardQuestion } from './quizCardData';
 import { validateQuizCardData } from './quizCardData';
+import { createPersistedLesson, decodePersistedLesson, type PersistedLesson } from '../learning/lessonPersistence';
 
 export type PersistedRichContent =
   | { type: 'quiz'; questions: readonly QuizCardQuestion[]; answers: Record<string, string>; currentIndex: number; completed: boolean }
+  | PersistedLesson
   | { type: 'generated_image'; uri: string; mimeType: 'image/png'; width: number; height: number; alt: string };
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -12,6 +14,7 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** Write the returned base64 exactly once into persistent app storage. */
 export async function persistRichReply(reply: RichReply, turnId: string): Promise<PersistedRichContent> {
   if (reply.type === 'quiz') return { type: 'quiz', questions: reply.questions, answers: {}, currentIndex: 0, completed: false };
+  if (reply.type === 'lesson') return createPersistedLesson(reply.deck, turnId);
   if (!FileSystem.documentDirectory) throw new Error('Persistent app storage is unavailable.');
   const byteLength = Math.floor(reply.base64.length * 3 / 4) - (reply.base64.endsWith('==') ? 2 : reply.base64.endsWith('=') ? 1 : 0);
   if (reply.mimeType !== 'image/png' || byteLength < 24 || byteLength > MAX_IMAGE_BYTES) throw new Error('Generated image is outside the supported size limit.');
@@ -44,5 +47,6 @@ export function decodePersistedRichContent(value: unknown): PersistedRichContent
     }
     return { type: 'quiz', questions, answers: validAnswers, currentIndex: value.currentIndex as number, completed: value.completed };
   }
+  if (value.type === 'lesson') return decodePersistedLesson(value);
   return undefined;
 }

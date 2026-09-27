@@ -1,4 +1,5 @@
 import { validateQuizCardData, type QuizCardQuestion } from './quizCardData';
+import { validateLessonDeck, type LessonDeck } from '../learning/deck';
 import type { ReasoningEffort } from './reasoningEffort';
 
 export type ChatMessage = {
@@ -26,6 +27,7 @@ export type ChatCompletion = {
 
 export type RichReply =
   | { type: 'quiz'; questions: readonly QuizCardQuestion[] }
+  | { type: 'lesson'; deck: LessonDeck }
   | { type: 'generated_image'; mimeType: 'image/png'; base64: string; width: number; height: number; alt: string };
 
 export type ChatCompletionErrorBody = {
@@ -50,6 +52,11 @@ function validateRichReply(value: unknown): RichReply {
     const result = validateQuizCardData(value);
     if (!result.ok || result.data.questions.some(question => !question.correctAnswer)) throw new Error('Quiz response is invalid.');
     return { type: 'quiz', questions: result.data.questions };
+  }
+  if (value.type === 'lesson') {
+    const result = validateLessonDeck(value.deck);
+    if (!result.ok) throw new Error('Lesson response is invalid.');
+    return { type: 'lesson', deck: result.deck };
   }
   if (value.type === 'generated_image') {
     if (value.mimeType !== 'image/png' || typeof value.base64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.base64)) throw new Error('Generated image encoding is invalid.');

@@ -2,15 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Haptics from 'expo-haptics';
 import { AccessibilityActionEvent, LayoutChangeEvent, Platform, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, cancelAnimation, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, cancelAnimation, interpolateColor, runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withSpring, withTiming } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { cosmos } from '../design/tokens';
 import type { ReasoningMode } from './reasoningEffort';
 
 type Props = {
   value: ReasoningMode;
   onChange: (mode: ReasoningMode) => void;
   labels: { instant: string; medium: string; high: string; effort: string; chooseEffort: string };
-  // The dial always sits on the dark scrim, so it keeps the dark reference palette; only the fill accent is themable.
-  colors: { accent: string; text?: string; muted?: string; faint?: string; line?: string; selected?: string };
   reducedMotion: boolean;
 };
 
@@ -27,7 +27,16 @@ const DOT_SIZE = 12;
 const TAP_SLOP = 6;
 const GRAB_SLOP = 8;
 const MAX_RELEASE_VELOCITY = 1200;
-const HUD = { capsule: '#303030', border: '#454545', rail: '#626262', dot: 'rgba(255,255,255,0.28)', thumb: '#FFFFFF', ring: '#A25BFF', text: '#FFFFFF', word: '#C8A4FB', muted: '#A7A7A7' };
+// The dial always sits on the dark scrim, so it uses the cosmic HUD colours in both themes.
+const HUD = cosmos.hud;
+// The fill reveals a fixed spectrum, so its leading edge warms from moonlit teal to solar gold as effort rises.
+const SPECTRUM = [0, 0.45, 0.72, 1];
+const [TEAL, INDIGO, VIOLET, GOLD] = cosmos.energy;
+const STOP_COLORS = [TEAL, '#9A8BFB', GOLD] as const;
+const BAND = 56;
+const HALO = RAIL_HEIGHT;
+// One energy cycle while dragging: a light pulse travels along the fill and the stars twinkle.
+const FLOW_MS = 1400;
 const SNAP_SPRING = { stiffness: 420, damping: 32, mass: 1 };
 const FOLLOW_SPRING = { stiffness: 1000, damping: 64, mass: 1 };
 const APPEAR = { duration: 150, easing: Easing.out(Easing.cubic) };
@@ -54,7 +63,7 @@ const tick = () => {
   } else void Haptics.selectionAsync().catch(() => undefined);
 };
 
-export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMotion }: Props) {
+export function ReasoningEffortDial({ value, onChange, labels, reducedMotion }: Props) {
   const stopIndex = value === 'default' ? -1 : STOPS.indexOf(value);
   // Seed the first render from the viewport so the entering capsule never has
   // to wait for onLayout → React state → effect before its selected rail appears.
@@ -73,6 +82,8 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
   const startX = useSharedValue(0);
   const grabOffset = useSharedValue(0);
   const reduced = useSharedValue(reducedMotion ? 1 : 0);
+  const energized = useSharedValue(0);
+  const flow = useSharedValue(0);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const placedIndex = useRef<number | null>(stopIndex);
@@ -139,6 +150,11 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
       if (phase.value === 1) {
         if (!grabbed.value && Math.abs(x - startX.value) < TAP_SLOP) return;
         phase.value = 2;
+        if (!reduced.value) {
+          energized.value = withTiming(1, { duration: 220 });
+          flow.value = 0;
+          flow.value = withRepeat(withTiming(1, { duration: FLOW_MS, easing: Easing.linear }), -1, false);
+        }
         if (settled.value < 0) {
           knob.value = clamp(x, EDGE, width - EDGE);
           shown.value = reduced.value ? 1 : withTiming(1, APPEAR);
@@ -153,6 +169,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
     .onFinalize((event, success) => {
       const width = railW.value;
       if (!phase.value || width <= 0) return;
+      if (energized.value > 0) energized.value = withTiming(0, { duration: 520, easing: Easing.out(Easing.quad) }, done => { if (done) cancelAnimation(flow); });
       if (!success) {
         const previousIndex = settled.value;
         phase.value = 0;
@@ -180,7 +197,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
       settled.value = index;
       if (index !== live.value) { live.value = index; runOnJS(preview)(index); }
       runOnJS(commit)(index);
-    }), [catching, clearPreview, commit, grabOffset, grabbed, knob, live, phase, preview, railW, reduced, settled, shown, startX]);
+    }), [catching, clearPreview, commit, energized, flow, grabOffset, grabbed, knob, live, phase, preview, railW, reduced, settled, shown, startX]);
 
   const tap = useMemo(() => Gesture.Tap().maxDistance(TAP_SLOP).onEnd((event, success) => {
     const width = railW.value;
@@ -200,17 +217,36 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
   const dialGesture = useMemo(() => Gesture.Race(pan, tap), [pan, tap]);
 
   // Springs may overshoot; the rail's ends stay hard stops.
-  const fillStyle = useAnimatedStyle(() => {
-    const travel = Math.max(1, railW.value - EDGE * 2);
-    const progress = clamp((knob.value - EDGE) / travel, 0, 1);
-    return { opacity: shown.value, width: railW.value * progress };
-  });
+  // The fill runs to the far edge of the thumb, so the thumb always sits on energy.
+  const fillStyle = useAnimatedStyle(() => ({ opacity: shown.value, width: clamp(knob.value, EDGE, railW.value - EDGE) + THUMB_SIZE / 2 }));
+  const headColor = () => {
+    'worklet';
+    const progress = clamp((knob.value - EDGE) / Math.max(1, railW.value - EDGE * 2), 0, 1);
+    return interpolateColor(progress, SPECTRUM, [TEAL, INDIGO, VIOLET, GOLD]);
+  };
   const thumbStyle = useAnimatedStyle(() => ({
     opacity: shown.value,
+    borderColor: headColor(),
     transform: [{ translateX: clamp(knob.value, EDGE, railW.value - EDGE) - THUMB_SIZE / 2 }, { scale: 0.72 + 0.28 * shown.value }],
   }));
+  const haloStyle = useAnimatedStyle(() => ({
+    opacity: shown.value * (0.2 + 0.3 * energized.value),
+    backgroundColor: headColor(),
+    transform: [{ translateX: clamp(knob.value, EDGE, railW.value - EDGE) - HALO / 2 }, { scale: 1 + 0.1 * energized.value }],
+  }));
+  // Outside a drag the pulse is invisible and its animation is cancelled, so a resting dial costs nothing.
+  const bandStyle = useAnimatedStyle(() => ({
+    opacity: energized.value * 0.9,
+    transform: [{ translateX: -BAND + flow.value * (clamp(knob.value, EDGE, railW.value - EDGE) + BAND) }],
+  }));
+  const twinkleA = useAnimatedStyle(() => ({ opacity: 0.5 + 0.4 * energized.value * Math.sin(flow.value * Math.PI * 4) }));
+  const twinkleB = useAnimatedStyle(() => ({ opacity: 0.5 - 0.4 * energized.value * Math.sin(flow.value * Math.PI * 4 + 1.2) }));
 
   const labelsByStop = [labels.instant, labels.medium, labels.high];
+  // Two star groups twinkle out of phase with each other.
+  const starGroups = useMemo(() => [0, 1].map(group => cosmos.stars.filter((_, index) => index % 2 === group).map(([x, y, size]) => (
+    <View key={`${x}`} style={{ position: 'absolute', left: x * railWidth - size / 2, top: y * RAIL_HEIGHT - size / 2, width: size, height: size, borderRadius: size / 2, backgroundColor: '#FFFFFF' }} />
+  ))), [railWidth]);
   const labelIndex = previewIndex ?? stopIndex;
   const onAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
     const step = event.nativeEvent.actionName === 'increment' ? 1 : event.nativeEvent.actionName === 'decrement' ? -1 : 0;
@@ -220,7 +256,7 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
 
   return <View style={{ width: '100%', alignItems: 'center', paddingHorizontal: 28 }}>
     <Text accessibilityLiveRegion="polite" style={{ color: HUD.text, fontFamily: 'Inter_300Light', fontSize: 22, lineHeight: 28, marginBottom: 18, textAlign: 'center' }}>
-      {labelIndex >= 0 ? <><Text style={{ color: HUD.word }}>{labelsByStop[labelIndex]}</Text>{` ${labels.effort}`}</> : <Text style={{ color: HUD.muted }}>{labels.chooseEffort}</Text>}
+      {labelIndex >= 0 ? <><Text style={{ color: STOP_COLORS[labelIndex] }}>{labelsByStop[labelIndex]}</Text>{` ${labels.effort}`}</> : <Text style={{ color: HUD.muted }}>{labels.chooseEffort}</Text>}
     </Text>
     <GestureDetector gesture={dialGesture}>
       <View
@@ -235,9 +271,39 @@ export function ReasoningEffortDial({ value, onChange, labels, colors, reducedMo
         style={{ width: '100%', maxWidth: 440, height: CAPSULE_HEIGHT, borderRadius: CAPSULE_HEIGHT / 2, backgroundColor: HUD.capsule, borderWidth: 0.5, borderColor: HUD.border, padding: CAPSULE_INSET - 0.5 }}
       >
         <View pointerEvents="none" style={{ height: RAIL_HEIGHT, borderRadius: RAIL_HEIGHT / 2, backgroundColor: HUD.rail, overflow: 'hidden' }}>
-          <Animated.View style={[{ position: 'absolute', left: 0, top: 0, width: railWidth, height: RAIL_HEIGHT, borderRadius: RAIL_HEIGHT / 2, backgroundColor: colors.accent }, fillStyle]} />
+          <Animated.View style={[{ position: 'absolute', left: 0, top: 0, height: RAIL_HEIGHT, borderRadius: RAIL_HEIGHT / 2, overflow: 'hidden' }, fillStyle]}>
+            <Svg width={railWidth} height={RAIL_HEIGHT}>
+              <Defs>
+                <LinearGradient id="energy" x1="0" y1="0" x2="1" y2="0">
+                  {SPECTRUM.map((offset, index) => <Stop key={offset} offset={offset} stopColor={cosmos.energy[index]} />)}
+                </LinearGradient>
+                <LinearGradient id="depth" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset={0} stopColor="#FFFFFF" stopOpacity={0.2} />
+                  <Stop offset={0.5} stopColor="#FFFFFF" stopOpacity={0} />
+                  <Stop offset={1} stopColor="#0B0C1A" stopOpacity={0.3} />
+                </LinearGradient>
+              </Defs>
+              <Rect x={0} y={0} width={railWidth} height={RAIL_HEIGHT} fill="url(#energy)" />
+              <Rect x={0} y={0} width={railWidth} height={RAIL_HEIGHT} fill="url(#depth)" />
+            </Svg>
+            <Animated.View style={[{ position: 'absolute', inset: 0 }, twinkleA]}>{starGroups[0]}</Animated.View>
+            <Animated.View style={[{ position: 'absolute', inset: 0 }, twinkleB]}>{starGroups[1]}</Animated.View>
+            <Animated.View style={[{ position: 'absolute', left: 0, top: 0, width: BAND, height: RAIL_HEIGHT }, bandStyle]}>
+              <Svg width={BAND} height={RAIL_HEIGHT}>
+                <Defs>
+                  <LinearGradient id="pulse" x1="0" y1="0" x2="1" y2="0">
+                    <Stop offset={0} stopColor="#FFFFFF" stopOpacity={0} />
+                    <Stop offset={0.5} stopColor="#FFFFFF" stopOpacity={0.42} />
+                    <Stop offset={1} stopColor="#FFFFFF" stopOpacity={0} />
+                  </LinearGradient>
+                </Defs>
+                <Rect x={0} y={0} width={BAND} height={RAIL_HEIGHT} fill="url(#pulse)" />
+              </Svg>
+            </Animated.View>
+          </Animated.View>
           {STOPS.map((stop, index) => <View key={stop} style={{ position: 'absolute', left: knobX(railWidth, index) - DOT_SIZE / 2, top: (RAIL_HEIGHT - DOT_SIZE) / 2, width: DOT_SIZE, height: DOT_SIZE, borderRadius: DOT_SIZE / 2, backgroundColor: HUD.dot }} />)}
-          <Animated.View style={[{ position: 'absolute', left: 0, top: THUMB_INSET, width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: THUMB_SIZE / 2, backgroundColor: HUD.thumb, borderWidth: 3, borderColor: HUD.ring, shadowColor: '#000000', shadowOpacity: 0.22, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 }, thumbStyle]} />
+          <Animated.View style={[{ position: 'absolute', left: 0, top: 0, width: HALO, height: HALO, borderRadius: HALO / 2 }, haloStyle]} />
+          <Animated.View style={[{ position: 'absolute', left: 0, top: THUMB_INSET, width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: THUMB_SIZE / 2, backgroundColor: HUD.thumb, borderWidth: 3, shadowColor: '#000000', shadowOpacity: 0.22, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 }, thumbStyle]} />
         </View>
       </View>
     </GestureDetector>

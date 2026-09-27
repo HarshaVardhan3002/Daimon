@@ -9,6 +9,7 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
+import expo.modules.splashscreen.SplashScreenManager
 
 class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,6 +22,13 @@ class MainActivity : ReactActivity() {
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
+    // Hold the native splash until JS hides it (expo prebuild normally injects this registration). Without it
+    // Android dropped the splash on the window's first, empty draw and showed a bare black window until the JS
+    // splash overlay, which draws the same frame and hides the native one, took over.
+    SplashScreenManager.registerOnActivity(this)
+    // React Native can report "content appeared" before the root layout's preventAutoHideAsync reaches native,
+    // which would hide the splash early; the JS overlay hides it, and expo-router still does on a fatal JS error.
+    SplashScreenManager.preventAutoHideCalled = true
     super.onCreate(null)
   }
 

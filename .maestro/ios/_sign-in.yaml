@@ -1,0 +1,17 @@
+# Signs in with a test participant when the welcome screen is showing (fresh installs). Sign-in has no server yet:
+# the development provider only checks the format.
+appId: ${APP_ID}
+---
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Participant ID"
+    timeout: 10000
+- takeScreenshot: ios-00-sign-in
+- tapOn: "Participant ID"
+- inputText: "P-0001"
+- tapOn: "Password"
+- inputText: "study"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Add attachment"
+    timeout: 15000
