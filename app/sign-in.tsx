@@ -103,13 +103,13 @@ export default function SignInScreen() {
           </IconButton>}
         />
       </View>
-
-      <View style={{ flex: 1, justifyContent: 'flex-end', paddingTop: 28 }}>
-        <Button label={busy ? t.signIn.loading : t.signIn.continue} onPress={() => void submit()} disabled={!participantId.trim() || !password} loading={busy} />
-      </View>
     </ScrollView>
 
-    <View style={{ alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8), backgroundColor: palette.canvas }}>
+    {/* Continue sits outside the scroll view so it stays above the keyboard on short screens and tall keyboards. */}
+    <View style={{ alignItems: 'center', gap: 12, paddingHorizontal: 24, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 8), backgroundColor: palette.canvas }}>
+        <View style={{ alignSelf: 'stretch' }}>
+          <Button label={busy ? t.signIn.loading : t.signIn.continue} onPress={() => void submit()} disabled={!participantId.trim() || !password} loading={busy} />
+        </View>
         <View accessibilityRole="text" style={{ minHeight: 38, maxWidth: '100%', borderRadius: 999, borderWidth: 1, borderColor: palette.line, paddingHorizontal: 13, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Icon name="info" size={15} color={palette.muted} />
           <Text style={{ ...textType.helper, fontFamily: font.medium, color: palette.muted, flexShrink: 1 }}>{t.signIn.development}</Text>
