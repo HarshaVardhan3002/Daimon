@@ -6,12 +6,22 @@ appId: ${APP_ID}
 - launchApp:
     stopApp: true
 - extendedWaitUntil:
-    visible: "Add attachment"
+    visible: "Add attachment|Sign in"
     timeout: 60000
+- runFlow:
+    when:
+      visible: "Sign in"
+    file: _sign-in.yaml
 - tapOn: "Message Daimon"
 - inputText: "dial check"
 - waitForAnimationToEnd
 - takeScreenshot: ios-13-keyboard-draft
+# The dial lives behind Think harder in the plus menu; switching it on shows the gauge in the composer.
+- tapOn: "Add attachment"
+- waitForAnimationToEnd
+- takeScreenshot: ios-13b-plus-menu
+- tapOn: "Think harder"
+- waitForAnimationToEnd
 - tapOn: "Thinking dial.*"
 - extendedWaitUntil:
     visible:

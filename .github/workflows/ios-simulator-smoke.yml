@@ -114,7 +114,7 @@ jobs:
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       # Maestro drives the app through XCUITest on the simulator. Screenshots land in artifacts/ui.
-      - name: Drive the UI (camera capture and review, reasoning dial)
+      - name: Drive the UI (camera, reasoning dial, screen tour)
         shell: bash
         run: |
           APP_PATH="$(find "$RUNNER_TEMP/DaimonDerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
@@ -133,6 +133,7 @@ jobs:
           # state is only testable on a device.
           run_flow 02-camera-granted-simulator || STATUS=1
           run_flow 03-reasoning-dial-keyboard || STATUS=1
+          run_flow 04-ui-tour || STATUS=1
           kill -INT "$VIDEO_PID" 2>/dev/null || true
           wait "$VIDEO_PID" || true
           EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Info.plist")"
