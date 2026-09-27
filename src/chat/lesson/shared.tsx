@@ -33,7 +33,7 @@ export function ChoiceButton({ label, onPress, disabled = false, selected = fals
     haptic="selection"
     onPress={onPress}
     style={{ minHeight: HIT, paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.row, borderWidth: 1, borderColor: tone !== 'normal' ? color : selected ? c.accent : c.line, backgroundColor: tone !== 'normal' ? `${color}18` : selected ? c.selected : c.raised, justifyContent: 'center', opacity: disabled ? 0.72 : 1 } as ViewStyle}
-  ><Text style={{ color: tone === 'normal' ? c.text : color, ...type.labelRegular }}>{label}</Text></PressableScale>;
+  >{/* Hyphenate long compounds (German) instead of breaking them mid-word in narrow chips. */}<Text android_hyphenationFrequency="full" style={{ color: tone === 'normal' ? c.text : color, ...type.labelRegular }}>{label}</Text></PressableScale>;
 }
 
 export function FeedbackText({ children }: { children: React.ReactNode }) {
