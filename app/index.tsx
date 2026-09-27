@@ -19,6 +19,9 @@ import { QuizCard } from '../src/chat/QuizCard';
 import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
 import { ReasoningGauge } from '../src/chat/ReasoningGauge';
 import { GeneratedImage } from '../src/chat/GeneratedImage';
+import { CameraSheet, type CameraSheetHandle, type CameraSheetRect } from '../src/chat/CameraSheet';
+import { cameraAccess } from '../src/chat/cameraPermission';
+import type { CapturedPhoto } from '../src/chat/cameraFlow';
 import { persistRichReply } from '../src/chat/richReply';
 import { validateQuizCardData } from '../src/chat/quizCardData';
 import { imageAttachmentDataUri, isSupportedImage, persistImageAttachment, type ImageAttachment } from '../src/chat/imageAttachment';
@@ -31,7 +34,12 @@ import { updateTurnList } from '../src/state/turns';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
 const ATTACHMENT_MENU_HEIGHT = 214;
-const keyboardScrim = NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined;
+const ATTACHMENT_MENU_WIDTH = 255;
+const HEADER_HEIGHT = 56;
+// Shades only the keyboard while the reasoning dial is open: an app-attached window over the IME
+// (android/.../KeyboardScrimModule.kt). iOS has no equivalent: on iOS 26 the keyboard is drawn by the system outside
+// the app's windows (only UIWindow and UITextEffectsWindow exist in the scene), so nothing in-app can cover it.
+const keyboardScrim = Platform.OS === 'android' ? NativeModules.KeyboardScrim as { show: (top: number, height: number, opacity: number) => void; hide: () => void } | undefined : undefined;
 
 const errorText = (locale: Locale, error: ChatRequestError) => {
   if (error === 'disconnected') return locale === 'de' ? 'Daimon ist gerade nicht erreichbar. Deine Nachricht bleibt im Chat und kann erneut gesendet werden.' : 'Daimon can’t be reached right now. Your message stays in the chat and can be retried.';
@@ -67,6 +75,12 @@ export default function HomeScreen() {
   const drawerWidth = Math.round(width * 0.8); const drawerProgress = useSharedValue(0); const gestureStartX = useSharedValue(0);
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
   const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
+  const [cameraOpen, setCameraOpen] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null); const [cameraExitTo, setCameraExitTo] = useState<CameraSheetRect | null>(null);
+  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraAskingRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
+  // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
+  const attachmentCameraHandoff = useSharedValue(0);
+  // 1 while the camera sheet is drawn over the menu card's place; the card itself hides so the two never double up.
+  const attachmentCameraCovering = useSharedValue(0);
   const attachmentMenuProgress = useSharedValue(0); const attachmentOriginLeft = useSharedValue(30); const attachmentOriginTop = useSharedValue(0); const attachmentTargetTop = useSharedValue(0);
   const legacyRequestPending = Boolean(activeSession.pendingLiveRequest);
 
@@ -103,6 +117,59 @@ export default function HomeScreen() {
     });
   }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentTargetTop, reducedMotion]);
 
+  const finishCameraHandoff = useCallback(() => {
+    attachmentMenuProgress.value = 0;
+    attachmentCameraHandoff.value = 0;
+    setAttachmentMenuVisible(false);
+  }, [attachmentCameraHandoff, attachmentMenuProgress]);
+  const openCamera = useCallback(async () => {
+    if (cameraOpenRef.current || cameraAskingRef.current) return;
+    const fromMenu = attachmentMenuVisible;
+    const restoreKeyboard = keyboardVisible;
+    // Ask before the sheet opens. Android pauses the app behind its permission dialog, and a sheet that finished growing
+    // during that pause came back open but invisible (still catching taps) once the app resumed.
+    cameraAskingRef.current = true;
+    try { await cameraAccess(true); } catch { /* the sheet reads access again and shows its denied state */ } finally { cameraAskingRef.current = false; }
+    cameraRestoresKeyboardRef.current = restoreKeyboard;
+    // Blur explicitly: a still-focused input would ignore the next tap and the keyboard would not come back after the camera.
+    inputRef.current?.blur(); Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
+    setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
+    cameraOpenRef.current = true; setCameraOpen(true);
+    if (!fromMenu) return;
+    setAttachmentSheetOpen(false); setAttachmentMenuInteractive(false);
+  }, [attachmentMenuVisible, attachmentTargetTop, keyboardVisible]);
+  // The sheet draws the card (colour and rows) itself as it grows, so the real card hides the frame the sheet covers it.
+  const onCameraEnterStart = useCallback(() => {
+    if (!attachmentMenuVisible) return;
+    attachmentCameraCovering.value = 1;
+    attachmentCameraHandoff.value = withTiming(1, { duration: reducedMotion ? 1 : 220 }, finished => { if (finished) runOnJS(finishCameraHandoff)(); });
+  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuVisible, finishCameraHandoff, reducedMotion]);
+  const onCameraExited = useCallback((to: 'menu' | 'chat') => {
+    attachmentCameraCovering.value = 0;
+    if (to === 'menu') setAttachmentMenuInteractive(true);
+  }, [attachmentCameraCovering]);
+  const closeCamera = useCallback((to: 'menu' | 'chat') => {
+    cameraOpenRef.current = false;
+    const backToMenu = to === 'menu' && cameraOrigin !== null;
+    setCameraExitTo(backToMenu ? cameraOrigin : null);
+    setCameraOpen(false);
+    // Every exit (back to the menu, outside tap, Use photo) gives the draft its keyboard back if the camera took it.
+    if (cameraRestoresKeyboardRef.current) {
+      cameraRestoresKeyboardRef.current = false;
+      // Blur first so focus() is a real focus change on Android and raises the keyboard again.
+      inputRef.current?.blur();
+      setTimeout(() => { if (!cameraOpenRef.current) inputRef.current?.focus(); }, 60);
+    }
+    if (!backToMenu) return;
+    // Backing out returns to the attachment menu the camera grew from. The sheet shrinks into the card's place and
+    // hands over to it when it lands (onCameraExited); only the dimmed backdrop fades in here.
+    attachmentMenuProgress.value = 1;
+    attachmentCameraCovering.value = 1;
+    attachmentCameraHandoff.value = 1;
+    setAttachmentMenuVisible(true); setAttachmentSheetOpen(true); setAttachmentMenuInteractive(false);
+    attachmentCameraHandoff.value = withTiming(0, { duration: reducedMotion ? 1 : 220, easing: Easing.bezier(0.3, 0, 0.2, 1) });
+  }, [attachmentCameraCovering, attachmentCameraHandoff, attachmentMenuProgress, cameraOrigin, reducedMotion]);
+
   useEffect(() => {
     if (!hydrated) return;
     const pending = activeSession.pendingChatRequest;
@@ -115,7 +182,7 @@ export default function HomeScreen() {
       setKeyboardVisible(true);
       const bounds = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
       keyboardBoundsRef.current = bounds;
-      if (Platform.OS === 'android' && reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
+      if (reasoningDialOpen) keyboardScrim?.show(bounds.top, bounds.height, 0.22);
       requestAnimationFrame(() => {
         dialOverlayBoundsRef.current?.measureInWindow((_x, y, _width, height) => {
           const rootBottom = y + height;
@@ -148,7 +215,7 @@ export default function HomeScreen() {
     return () => { show.remove(); hide.remove(); };
   }, [attachmentMenuProgress, attachmentOriginLeft, attachmentOriginTop, attachmentSheetOpen, attachmentTargetTop, closeAttachmentMenu, reasoningDialOpen]);
   useEffect(() => {
-    if (Platform.OS === 'android' && reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
+    if (reasoningDialOpen && keyboardVisible && keyboardBoundsRef.current) {
       const { top, height } = keyboardBoundsRef.current;
       keyboardScrim?.show(top, height, 0.22);
     } else keyboardScrim?.hide();
@@ -177,6 +244,7 @@ export default function HomeScreen() {
   useEffect(() => { drawerProgress.value = withTiming(drawerOpen ? 1 : 0, { duration: reducedMotion ? 1 : drawerOpen ? 240 : 190, easing: Easing.out(Easing.cubic) }); }, [drawerOpen, reducedMotion, drawerProgress]);
   useFocusEffect(useCallback(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (cameraOpen) return cameraSheetRef.current?.handleBack() ?? true;
       if (reasoningDialOpen) { closeReasoningDial(); return true; }
       if (attachmentSheetOpen || attachmentMenuVisible) { closeAttachmentMenu(); return true; }
       if (drawerOpen) { setDrawerOpen(false); Keyboard.dismiss(); return true; }
@@ -185,7 +253,7 @@ export default function HomeScreen() {
       return false;
     });
     return () => sub.remove();
-  }, [reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
+  }, [cameraOpen, reasoningDialOpen, closeReasoningDial, attachmentSheetOpen, attachmentMenuVisible, closeAttachmentMenu, drawerOpen, profileOpen, keyboardVisible]));
 
   const showNotice = useCallback((message: string) => { setNotice(message); if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); noticeTimerRef.current = setTimeout(() => setNotice(''), 1800); }, []);
   const runChatRequest = useCallback(async (request: PendingChatRequest) => {
@@ -336,7 +404,7 @@ export default function HomeScreen() {
   const rootStyle = useMemo(() => ({ flex: 1, backgroundColor: c.canvas }), [c.canvas]);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: drawerProgress.value * 0.38 }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(drawerProgress.value, [0, 1], [-drawerWidth, 0]) }] }));
-  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 }));
+  const attachmentBackdropStyle = useAnimatedStyle(() => ({ opacity: attachmentMenuProgress.value * 0.34 * (1 - attachmentCameraHandoff.value) }));
   const attachmentCardStyle = useAnimatedStyle(() => ({
     left: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginLeft.value, 22]),
     top: interpolate(attachmentMenuProgress.value, [0, 1], [attachmentOriginTop.value, attachmentTargetTop.value]),
@@ -344,8 +412,25 @@ export default function HomeScreen() {
     height: interpolate(attachmentMenuProgress.value, [0, 1], [44, ATTACHMENT_MENU_HEIGHT]),
     borderRadius: 22,
     backgroundColor: c.surface,
-    shadowOpacity: attachmentMenuProgress.value * 0.28,
+    shadowOpacity: attachmentMenuProgress.value * 0.28 * (1 - attachmentCameraHandoff.value),
+    opacity: 1 - attachmentCameraCovering.value,
   }));
+  // Also drawn (inert) inside the camera sheet, so the rows fade within the card as it grows into the viewfinder and back.
+  const attachmentRows = (live: boolean) => ([
+    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
+    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
+    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
+  ]).map(item => <Pressable key={item.key} disabled={!live || !attachmentMenuInteractive} onPress={() => {
+    if (item.key === 'camera') void openCamera();
+    else void chooseAttachment(item.key);
+  }} accessible={live} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
+    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
+    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
+  </Pressable>);
+  // Stable so the memoised camera sheet skips the chat's per-keystroke renders; the ghost rows are inert, so only
+  // their look matters here.
+  const cameraGhost = useMemo(() => <View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>{attachmentRows(false)}</View>, [locale, c.raised, c.text]);
+  const cameraPalette = useMemo(() => ({ surface: c.surface }), [c.surface]);
   const attachmentPlusStyle = useAnimatedStyle(() => ({
     opacity: interpolate(attachmentMenuProgress.value, [0, 0.24], [1, 0], Extrapolation.CLAMP),
   }));
@@ -353,7 +438,7 @@ export default function HomeScreen() {
     opacity: interpolate(attachmentMenuProgress.value, [0.2, 0.58], [0, 1], Extrapolation.CLAMP),
     transform: [{ translateY: interpolate(attachmentMenuProgress.value, [0, 1], [10, 0]) }],
   }));
-  const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen), [drawerOpen, gestureStartX, openDrawer]);
+  const edgeGesture = useMemo(() => Gesture.Pan().activeOffsetX(12).failOffsetY([-10, 10]).onStart(event => { gestureStartX.value = event.absoluteX; }).onEnd(event => { if (gestureStartX.value < 26 && event.translationX > 52) runOnJS(openDrawer)(); }).enabled(!drawerOpen && !cameraOpen), [cameraOpen, drawerOpen, gestureStartX, openDrawer]);
   const drawerGesture = useMemo(() => Gesture.Pan().activeOffsetX(-12).failOffsetY([-10, 10]).onEnd(event => { if (event.translationX < -48) runOnJS(closeDrawer)(); }).enabled(drawerOpen), [closeDrawer, drawerOpen]);
 
   const retryableRequestForTurn = (turnId: string) => {
@@ -363,17 +448,11 @@ export default function HomeScreen() {
     return stored?.error?.startsWith('document_') ? undefined : stored;
   };
 
-  const chooseAttachment = useCallback(async (kind: 'camera' | 'photos' | 'files') => {
+  const chooseAttachment = useCallback(async (kind: 'photos' | 'files') => {
     closeAttachmentMenu();
     try {
       let uri = ''; let name = ''; let mimeType: string | null | undefined; let width = 0; let height = 0; let sizeBytes: number | null | undefined;
-      if (kind === 'camera') {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) { showNotice(locale === 'de' ? 'Kamerazugriff wurde nicht erlaubt' : 'Camera access was not allowed'); return; }
-        const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-        if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'camera.jpg'; mimeType = asset.mimeType; width = asset.width; height = asset.height;
-      } else if (kind === 'photos') {
+      if (kind === 'photos') {
         const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
         if (result.canceled || !result.assets?.[0]) return;
         const asset = result.assets[0]; uri = asset.uri; name = asset.fileName || 'photo'; mimeType = asset.mimeType; width = asset.width; height = asset.height;
@@ -401,6 +480,11 @@ export default function HomeScreen() {
         : (locale === 'de' ? 'Bild konnte nicht hinzugefügt werden' : 'Could not attach that image'));
     }
   }, [closeAttachmentMenu, locale, setActiveSession, setDocumentAttachment, setImageAttachment, showNotice]);
+  /** Throws so the camera sheet can keep the photo in review and offer another try. */
+  const attachCapturedPhoto = useCallback(async (photo: CapturedPhoto) => {
+    const attachment = await persistImageAttachment(photo.uri, 'camera.jpg', photo.width, photo.height);
+    setDocumentAttachment(undefined); setImageAttachment(attachment);
+  }, [setDocumentAttachment, setImageAttachment]);
   const removeImageAttachment = useCallback(() => setImageAttachment(undefined), [setImageAttachment]);
   const removeDocumentAttachment = useCallback(() => setDocumentAttachment(undefined), [setDocumentAttachment]);
   const forgetDocumentContext = useCallback(() => setActiveSession(current => ({ ...current, activeDocumentContext: undefined })), [setActiveSession]);
@@ -449,9 +533,9 @@ export default function HomeScreen() {
 
   return <GestureDetector gesture={edgeGesture}><SafeAreaView style={rootStyle} edges={['top', 'left', 'right']}>
     <View ref={dialOverlayBoundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen} importantForAccessibility={drawerOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={drawerOpen}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' || Platform.OS === 'android' ? 'padding' : undefined} keyboardVerticalOffset={0} accessibilityElementsHidden={cameraOpen} importantForAccessibility={cameraOpen ? 'no-hide-descendants' : 'auto'}>
         <View ref={attachmentBoundsRef} style={{ flex: 1 }}>
-          <View style={{ height: 56, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ height: HEADER_HEIGHT, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={openDrawer} accessibilityRole="button" accessibilityLabel={t.menu} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="menu" size={20} color={c.text} /></Pressable>
             <View style={{ flex: 1 }} />
             <Pressable onPress={() => setChatActionsOpen(value => !value)} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Chataktionen' : 'Chat actions'} accessibilityState={{ expanded: chatActionsOpen }} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="more-vertical" size={20} color={c.text} /></Pressable>
@@ -482,7 +566,8 @@ export default function HomeScreen() {
               </View> : null}
               <View style={{ minHeight: 44, maxHeight: 136, flexDirection: 'row', alignItems: draft.includes('\n') ? 'flex-end' : 'center', gap: 4 }}>
                 <Pressable ref={attachmentPlusRef} disabled={requestStatus === 'loading'} onPress={openAttachmentMenu} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Anhang hinzufügen' : 'Add attachment'} accessibilityState={{ disabled: requestStatus === 'loading', expanded: attachmentSheetOpen }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : requestStatus === 'loading' ? 0.45 : 1 }}><Feather name="plus" size={23} color={c.text} /></Pressable>
-                <TextInput ref={inputRef} value={draft} onChangeText={setDraft} placeholder={reasoningMode === 'default' ? t.composer : locale === 'de' ? 'Nachricht' : 'Message'} placeholderTextColor={reasoningDialOpen ? 'transparent' : c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={t.composer} selectionColor={reasoningDialOpen ? 'transparent' : c.accent} style={{ flex: 1, color: reasoningDialOpen ? 'transparent' : c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
+                {/* iOS appends the placeholder to a text input's label, so there the placeholder alone names it (no "Message Daimon Message Daimon"). */}
+                <TextInput ref={inputRef} value={draft} onChangeText={setDraft} keyboardAppearance={theme} placeholder={reasoningMode === 'default' ? t.composer : locale === 'de' ? 'Nachricht' : 'Message'} placeholderTextColor={reasoningDialOpen ? 'transparent' : c.faint} multiline maxLength={5000} returnKeyType="default" blurOnSubmit={false} accessibilityLabel={Platform.OS === 'ios' ? undefined : t.composer} selectionColor={reasoningDialOpen ? 'transparent' : c.accent} style={{ flex: 1, color: reasoningDialOpen ? 'transparent' : c.text, fontFamily: 'Inter_400Regular', fontSize: 16, lineHeight: 22, maxHeight: 136, paddingLeft: 5, paddingTop: 9, paddingBottom: 8, textAlignVertical: 'center' }} />
                 <Pressable onPress={openReasoningDial} onLongPress={reasoningMode !== 'default' ? () => { void Haptics.selectionAsync().catch(() => undefined); setReasoningMode('default'); } : undefined} accessibilityRole="button" accessibilityLabel={`${locale === 'de' ? 'Denkstufe' : 'Thinking dial'}: ${reasoningModeLabel}`} accessibilityHint={reasoningMode !== 'default' ? (locale === 'de' ? 'Gedrückt halten, um die Denkstufe zurückzusetzen.' : 'Long press to clear the thinking mode.') : undefined} accessibilityActions={reasoningMode !== 'default' ? [{ name: 'default', label: locale === 'de' ? 'Denkmodus zurücksetzen' : 'Clear thinking mode' }] : undefined} onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'default') setReasoningMode('default'); }} accessibilityState={{ selected: reasoningMode !== 'default' }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><ReasoningGauge mode={reasoningMode} theme={theme} /></Pressable>
                 {requestStatus === 'loading' ? <Pressable onPress={stopRequest} accessibilityRole="button" accessibilityLabel={t.stop} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="square" size={15} color={c.canvas} /></Pressable> : draft.trim() || imageAttachment || documentAttachment ? <Pressable onPress={send} accessibilityRole="button" accessibilityLabel={t.send} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: reasoningDialOpen ? 0 : 1 }}><Feather name="arrow-up" size={21} color="#17101F" /></Pressable> : <View accessible={false} style={{ width: 44, height: 44 }} />}
               </View>
@@ -505,27 +590,20 @@ export default function HomeScreen() {
               <View accessibilityViewIsModal={attachmentMenuInteractive} accessibilityElementsHidden={!attachmentMenuInteractive} importantForAccessibility={attachmentMenuInteractive ? 'auto' : 'no-hide-descendants'} aria-hidden={!attachmentMenuInteractive} style={{ flex: 1, backgroundColor: 'transparent', borderRadius: 22, overflow: 'hidden', paddingHorizontal: 12, paddingVertical: 8 }}>
                 <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }, attachmentPlusStyle]}><Feather name="plus" size={23} color={c.muted} /></Animated.View>
                 <Animated.View pointerEvents={attachmentMenuInteractive ? 'auto' : 'none'} style={[{ flex: 1 }, attachmentContentStyle]}>
-                  {([
-                    { key: 'camera' as const, label: locale === 'de' ? 'Kamera' : 'Camera', icon: 'camera' as const },
-                    { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
-                    { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
-                  ]).map(item => <Pressable key={item.key} disabled={!attachmentMenuInteractive} onPress={() => {
-                    void chooseAttachment(item.key);
-                  }} accessibilityRole="button" accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
-                    <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>
-                    <Text style={{ color: c.text, fontFamily: 'Inter_500Medium', fontSize: 16 }}>{item.label}</Text>
-                  </Pressable>)}
+                  {attachmentRows(true)}
                 </Animated.View>
               </View>
             </Animated.View>
           </View> : null}
         </View>
       </KeyboardAvoidingView>
+      {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
+      {hydrationStatus === 'ready' ? <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} /> : null}
     </View>
 
-    {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
+    {reasoningDialOpen && !attachmentMenuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityViewIsModal onAccessibilityEscape={closeReasoningDial} accessibilityElementsHidden={!reasoningDialOpen} importantForAccessibility={reasoningDialOpen ? 'auto' : 'no-hide-descendants'} aria-hidden={!reasoningDialOpen} style={{ position: 'absolute', zIndex: 110, elevation: 26, left: 0, right: 0, top: 0, bottom: 0 }}>
       <Pressable onPress={closeReasoningDial} accessibilityRole="button" accessibilityLabel={locale === 'de' ? 'Denkstufe schließen' : 'Close reasoning effort'} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#00000066' }} />
-      <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} accessibilityViewIsModal style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? dialKeyboardBottomOffset : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
+      <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(210).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150).easing(Easing.out(Easing.cubic))} style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardVisible ? dialKeyboardBottomOffset : Math.max(insets.bottom, 8) + 3 + (imageAttachment || documentAttachment ? 128 : 62) + 10, alignItems: 'center' }}>
         <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={{ instant: locale === 'de' ? 'Sofort' : 'Instant', medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: locale === 'de' ? 'Aufwand' : 'effort', chooseEffort: locale === 'de' ? 'Denkaufwand wählen' : 'Choose effort' }} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
         {imageAttachment && reasoningMode !== 'default' ? <Text accessibilityLiveRegion="polite" style={{ width: '84%', color: c.muted, fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 15, marginTop: 8, textAlign: 'center' }}>{locale === 'de' ? 'Bildanfragen benötigen das Standardmodell. Schließe den Regler und wähle es im Menü; dein Bild bleibt im Entwurf.' : 'Image requests need the default model. Close this dial and choose it in the menu; your image stays in the draft.'}</Text> : null}
       </Animated.View>
@@ -537,7 +615,7 @@ export default function HomeScreen() {
         <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, marginRight: 12, color: c.text, fontFamily: 'Inter_600SemiBold', fontSize: 25 }}>{profileOpen ? t.profileTitle : t.drawerTitle}</Text>
         {profileOpen ? <Pressable onPress={() => setProfileOpen(false)} accessibilityRole="button" accessibilityLabel={t.back} style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}><Feather name="arrow-left" size={21} color={c.text} /></Pressable> : <Pressable onPress={() => setSearchOpen(value => !value)} accessibilityRole="button" accessibilityLabel={t.search} style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }}><Feather name="search" size={20} color={c.text} /></Pressable>}
       </View>
-      {!profileOpen && searchOpen ? <View style={{ marginHorizontal: 20, marginBottom: 9, height: 48, borderRadius: 15, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13 }}><Feather name="search" size={17} color={c.muted} /><TextInput value={query} onChangeText={setQuery} placeholder={t.searchPlaceholder} placeholderTextColor={c.faint} accessibilityLabel={t.searchPlaceholder} autoFocus style={{ marginLeft: 9, color: c.text, flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14 }} /></View> : null}
+      {!profileOpen && searchOpen ? <View style={{ marginHorizontal: 20, marginBottom: 9, height: 48, borderRadius: 15, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13 }}><Feather name="search" size={17} color={c.muted} /><TextInput keyboardAppearance={theme} value={query} onChangeText={setQuery} placeholder={t.searchPlaceholder} placeholderTextColor={c.faint} accessibilityLabel={t.searchPlaceholder} autoFocus style={{ marginLeft: 9, color: c.text, flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14 }} /></View> : null}
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }} style={{ flex: 1 }}>
         {profileOpen ? <>
           <Text style={{ color: c.muted, fontFamily: 'Inter_600SemiBold', fontSize: 12, marginTop: 19, marginBottom: 8, paddingHorizontal: 9 }}>{t.theme}</Text>

@@ -12,3 +12,6 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# modules/daimon-camera reads expo-camera's bound CameraX camera and calls resumePreview by name.
+-keepclassmembers class expo.modules.camera.ExpoCameraView { *** camera; public void resumePreview(); }

@@ -33,6 +33,14 @@
         }
       ],
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Daimon to use the camera to attach a photo.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-media-library",
         {
           "photosPermission": false,

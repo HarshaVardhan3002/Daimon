@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.anonymous.assistantmobile'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.daimoncamera"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Provided at runtime by expo-camera; pinned to the CameraX version it ships so the APIs line up.
+  compileOnly "androidx.camera:camera-core:1.6.0"
+  compileOnly "androidx.camera:camera-view:1.6.0"
+}

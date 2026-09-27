@@ -1,0 +1,53 @@
+# Camera access granted. The Simulator has no camera hardware, but expo-camera still opens a session (black frames)
+# and generates a placeholder photo on capture, so the whole capture -> review -> Use photo path runs here.
+appId: ${APP_ID}
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Add attachment"
+    timeout: 60000
+- takeScreenshot: ios-01-home
+- tapOn: "Add attachment"
+- waitForAnimationToEnd
+- takeScreenshot: ios-02-attachment-menu
+- tapOn: "Camera"
+- takeScreenshot: ios-07-camera-entry
+- extendedWaitUntil:
+    visible: "Camera options"
+    timeout: 10000
+# Collapsed options stay out of the accessibility tree; expanded ones are in it.
+- assertNotVisible: "Flash.*"
+- assertNotVisible: "Switch camera"
+- tapOn: "Camera options"
+- waitForAnimationToEnd
+- assertVisible: "Flash: Off"
+- assertVisible: "Switch camera"
+- takeScreenshot: ios-08-options-stack
+- tapOn: "Flash: Off"
+- assertVisible: "Flash: Auto"
+- tapOn: "Hide camera options"
+- waitForAnimationToEnd
+- assertNotVisible: "Switch camera"
+- takeScreenshot: ios-09-camera-live
+- tapOn: "Close camera"
+- waitForAnimationToEnd
+- assertVisible: "Photos"
+- takeScreenshot: ios-10-back-to-menu
+- tapOn: "Camera"
+- extendedWaitUntil:
+    visible: "Camera options"
+    timeout: 10000
+- tapOn: "Take photo"
+- extendedWaitUntil:
+    visible: "Use photo"
+    timeout: 15000
+- assertVisible: "Retake"
+- takeScreenshot: ios-11-review
+- tapOn: "Use photo"
+- extendedWaitUntil:
+    visible: "camera.jpg"
+    timeout: 15000
+- assertVisible: "Remove image"
+- takeScreenshot: ios-12-photo-attached
+- tapOn: "Remove image"
