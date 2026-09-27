@@ -10,7 +10,7 @@ test('both preview languages provide valid decks with every format', () => {
   for (const locale of ['en', 'de']) {
     const result = validateLessonDeck(previewLesson(locale));
     assert.equal(result.ok, true);
-    assert.equal(result.deck.cards.length, 7);
+    assert.equal(result.deck.cards.length, 8);
     assert.equal(new Set(result.deck.cards.map(card => card.kind)).size, 7);
   }
 });

@@ -96,8 +96,10 @@ function Plate({ depth, drag, children }: { depth: 1 | 2; drag: SharedValue<numb
   });
   // Deeper cards sit further back in the dark (or the dawn light).
   const veil = useAnimatedStyle(() => ({ opacity: 0.28 * clamp(depth - drag.value, 0, 2) }));
+  // At rest only clean edges peek out; the content surfaces as the card comes forward.
+  const content = useAnimatedStyle(() => ({ opacity: clamp(drag.value - (depth - 1), 0, 1) }));
   return <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: STACK_PAD, borderRadius: radius.card, overflow: 'hidden', backgroundColor: c.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: c.line, transformOrigin: 'bottom' }, style]}>
-    {children}
+    {children ? <Animated.View style={content}>{children}</Animated.View> : null}
     <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: c.canvas }, veil]} />
   </Animated.View>;
 }
@@ -167,14 +169,12 @@ const TopCard = forwardRef<TopHandle, TopCardProps>(function TopCard({ meaning, 
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: x.value }, { rotate: `${reduced ? 0 : clamp(x.value / Math.max(1, width.value) * TILT * 2, -TILT, TILT)}deg` }],
   }), [reduced]);
-  const toward = (sign: 1 | -1) => {
-    'worklet';
-    return mode === 'locked' ? 0 : clamp(sign * x.value / Math.max(1, width.value * COMMIT), 0, 1);
-  };
-  const rightCue = useAnimatedStyle(() => ({ opacity: toward(1) }), [mode]);
-  const leftCue = useAnimatedStyle(() => ({ opacity: toward(-1) }), [mode]);
-  const rightTint = useAnimatedStyle(() => ({ opacity: 0.1 * toward(1) }), [mode]);
-  const leftTint = useAnimatedStyle(() => ({ opacity: 0.1 * toward(-1) }), [mode]);
+  // Each style reads x and width itself: Reanimated only tracks shared values a style reads directly.
+  const locked = mode === 'locked';
+  const rightCue = useAnimatedStyle(() => ({ opacity: locked ? 0 : clamp(2.5 * x.value / Math.max(1, width.value * COMMIT) - 0.15, 0, 1) }), [locked]);
+  const leftCue = useAnimatedStyle(() => ({ opacity: locked ? 0 : clamp(-2.5 * x.value / Math.max(1, width.value * COMMIT) - 0.15, 0, 1) }), [locked]);
+  const rightTint = useAnimatedStyle(() => ({ opacity: locked ? 0 : 0.1 * clamp(x.value / Math.max(1, width.value * COMMIT), 0, 1) }), [locked]);
+  const leftTint = useAnimatedStyle(() => ({ opacity: locked ? 0 : 0.1 * clamp(-x.value / Math.max(1, width.value * COMMIT), 0, 1) }), [locked]);
   const binary = meaning.mode === 'binary';
   const rightColor = binary ? c.success : c.accent;
   const leftColor = binary ? c.danger : c.accent;
@@ -217,7 +217,7 @@ function StackButton({ icon, color, label, onPress }: { icon: FeatherName; color
 export function LessonDeck({ turnId, lesson, onChange }: Props) {
   const c = usePalette(); const t = useStrings().lesson; const reduced = useReducedMotion();
   const { height: windowHeight } = useWindowDimensions();
-  const minCard = Math.round(clamp(windowHeight * 0.42, 300, 380));
+  const minCard = Math.round(clamp(windowHeight * 0.36, 270, 340));
   const [review, setReview] = useState<{ indices: number[]; cursor: number; progress: Record<string, CardProgress> } | null>(null);
   const [revisiting, setRevisiting] = useState(false);
   const [verdict, setVerdict] = useState<{ key: number; correct: boolean; text: string } | null>(null);
@@ -260,6 +260,8 @@ export function LessonDeck({ turnId, lesson, onChange }: Props) {
       : event.type === 'match' ? event.left === event.right : next.correct;
     const telemetryAction = event.type === 'flip' ? 'flip' : event.type === 'swipe' ? 'swipe' : event.type === 'reveal' ? 'reveal' : 'answer';
     if (event.type !== 'shown') track('learn', { deck: turnId, format: card.kind, action: telemetryAction, ...(correct === undefined ? {} : { correct }), ms, index });
+    // The reason under the stack belongs to the previous card; it goes once this one is engaged.
+    if (event.type !== 'swipe') setVerdict(null);
     if (review) setReview(current => current && { ...current, progress: { ...current.progress, [card.id]: next } });
     else {
       if (!previous.answered && next.answered) recordTasteCompleted(card.kind, next.correct === true, ms);
@@ -322,7 +324,6 @@ export function LessonDeck({ turnId, lesson, onChange }: Props) {
     recordTasteFeedback(kind, signal);
     track('learn_feedback', { deck: turnId, format: kind, signal });
   };
-  const chip = { minHeight: HIT, borderRadius: radius.pill, paddingHorizontal: 16, paddingVertical: 10, justifyContent: 'center' as const, backgroundColor: c.raised };
 
   return <View style={{ marginTop: 16, gap: 12 }}>
     <Text accessibilityRole="header" style={{ ...type.heading, color: c.text }}>{lesson.deck.title}</Text>
@@ -334,17 +335,35 @@ export function LessonDeck({ turnId, lesson, onChange }: Props) {
     </View>
 
     {summary ? <View style={{ padding: 20, gap: 18, borderRadius: radius.card, backgroundColor: c.surface, borderColor: c.line, borderWidth: StyleSheet.hairlineWidth }}>
-      <Text accessibilityLiveRegion="polite" accessibilityRole="header" style={{ ...type.title, color: c.text }}>{scored.length ? t.score(score, scored.length) : t.deckFinished}</Text>
-      {scored.length ? <Text style={{ ...type.helper, color: c.muted }}>{t.deckFinished}</Text> : null}
-      {kinds.map(kind => <View key={kind} style={{ gap: 8 }}>
-        <Text style={{ ...type.label, color: c.text }}>{t.kind[kind]}</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {(['more', 'less'] as const).map(signal => <PressableScale key={signal} scaleTo={0.97} accessibilityRole="button" accessibilityLabel={`${signal === 'more' ? t.more : t.less}: ${t.kind[kind]}`} accessibilityState={{ selected: lesson.feedback[kind] === signal }} onPress={() => feedback(kind, signal)} style={[chip, { borderWidth: 1, borderColor: lesson.feedback[kind] === signal ? c.accent : c.line }]}>
-            <Text style={{ ...type.helper, color: lesson.feedback[kind] === signal ? c.accent : c.muted }}>{signal === 'more' ? t.more : t.less}</Text>
-          </PressableScale>)}
+      <View style={{ gap: 10 }}>
+        <Text accessibilityLiveRegion="polite" accessibilityRole="header" style={{ ...type.display, color: c.text }}>{scored.length ? t.score(score, scored.length) : t.deckFinished}</Text>
+        {scored.length ? <Text style={{ ...type.helper, color: c.muted }}>{t.deckFinished}</Text> : null}
+        {/* The deck in order: a soft recap of what landed and what did not. */}
+        <View importantForAccessibility="no-hide-descendants" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+          {lesson.order.map(cardIndex => {
+            const item = lesson.deck.cards[cardIndex];
+            const result = item.kind === 'idea' ? undefined : savedProgress(lesson.progress, item.id)?.correct;
+            return <View key={item.id} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: result === undefined ? c.faint : result ? c.success : c.danger, opacity: result === undefined ? 0.5 : 1 }} />;
+          })}
         </View>
-      </View>)}
-      {missed.length ? <PressableScale scaleTo={0.97} accessibilityRole="button" onPress={() => { haptic('selection'); setVerdict(null); setReview({ indices: missed, cursor: 0, progress: {} }); }} style={chip}><Text style={{ ...type.label, color: c.text }}>{t.reviewMissed}</Text></PressableScale> : null}
+      </View>
+      <View style={{ gap: 4 }}>
+        <Text style={{ ...type.helper, color: c.muted, marginBottom: 6 }}>{t.tasteTitle}</Text>
+        {kinds.map(kind => <View key={kind} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: HIT }}>
+          <Text style={{ ...type.labelRegular, color: c.text, flex: 1 }}>{t.kind[kind]}</Text>
+          <View style={{ flexDirection: 'row', backgroundColor: c.selected, borderRadius: radius.pill, padding: 3 }}>
+            {(['more', 'less'] as const).map(signal => {
+              const on = lesson.feedback[kind] === signal;
+              return <PressableScale key={signal} scaleTo={0.97} accessibilityRole="button" accessibilityLabel={`${signal === 'more' ? t.more : t.less}: ${t.kind[kind]}`} accessibilityState={{ selected: on }} onPress={() => feedback(kind, signal)} style={{ minHeight: 34, minWidth: 64, paddingHorizontal: 14, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? c.raised : 'transparent' }}>
+                <Text style={{ ...type.label, fontSize: 14, color: on ? (signal === 'more' ? c.accent : c.text) : c.muted }}>{signal === 'more' ? t.moreShort : t.lessShort}</Text>
+              </PressableScale>;
+            })}
+          </View>
+        </View>)}
+      </View>
+      {missed.length ? <PressableScale scaleTo={0.97} accessibilityRole="button" onPress={() => { haptic('selection'); setVerdict(null); setReview({ indices: missed, cursor: 0, progress: {} }); }} style={{ minHeight: HIT + 4, borderRadius: radius.pill, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ ...type.label, color: c.text }}>{t.reviewMissed}</Text>
+      </PressableScale> : null}
     </View> : <>
       <View onLayout={event => { width.value = event.nativeEvent.layout.width; }} style={{ paddingBottom: STACK_PAD }}>
         {upcoming.length > 1 ? <Plate depth={2} drag={drag} /> : null}
@@ -364,7 +383,6 @@ export function LessonDeck({ turnId, lesson, onChange }: Props) {
           <StackButton icon="x" color={c.danger} label={meaning.left} onPress={() => topRef.current?.fling('left')} />
           <StackButton icon="check" color={c.success} label={meaning.right} onPress={() => topRef.current?.fling('right')} />
         </> : meaning.mode === 'continue' ? <PressableScale scaleTo={0.98} accessibilityRole="button" accessibilityLabel={review && review.cursor === review.indices.length - 1 ? t.reviewDone : lesson.completed ? t.finish : t.next} onPress={() => topRef.current?.fling('left')} style={{ flex: 1, minHeight: HIT, borderRadius: radius.pill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <Icon name="chevrons-left" size={16} color={c.faint} />
           <Text style={{ ...type.helper, color: c.muted }}>{t.swipeNext}</Text>
         </PressableScale> : <Text accessibilityLiveRegion="polite" style={{ ...type.helper, color: c.faint, flex: 1, textAlign: 'center' }}>{meaning.hint}</Text>}
       </View>

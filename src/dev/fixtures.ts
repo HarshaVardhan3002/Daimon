@@ -21,6 +21,7 @@ export function previewLesson(locale: 'en' | 'de'): LessonDeck {
     cards: [
       { kind: 'idea', id: 'horizon', anchor: 'c', title: 'Eine Grenze ohne Rückweg', body: 'Der Ereignishorizont ist die Grenze eines schwarzen Lochs. Von innerhalb dieser Grenze kann kein Signal nach außen gelangen, auch kein Licht.' },
       { kind: 'flip', id: 'light', front: 'Kann Licht aus dem Inneren des Ereignishorizonts entkommen?', back: 'Nein. Innerhalb des Ereignishorizonts führen alle zukünftigen Wege weiter nach innen.' },
+      { kind: 'flip', id: 'spaghetti', front: 'Was ist Spaghettifizierung?', back: 'Die Dehnung eines Objekts durch Gezeitenkräfte nahe einem Schwarzen Loch: Die Anziehung an seinem nahen Ende ist viel stärker als am fernen.' },
       { kind: 'mcq', id: 'mass', prompt: 'Die Sonne würde durch ein schwarzes Loch gleicher Masse ersetzt. Was geschähe mit der Erdbahn?', options: ['Sie bliebe annähernd gleich.', 'Die Erde würde sofort eingesaugt.', 'Die Erde würde wegfliegen.'], answerIndex: 0, why: 'In dieser Entfernung wirkt dieselbe Schwerkraft. Die Erde würde allerdings Licht und Wärme verlieren.', confidence: true },
       { kind: 'swipe', id: 'vacuum', statement: 'Schwarze Löcher saugen alles im Universum ein.', isTrue: false, why: 'In großer Entfernung wirkt ihre Schwerkraft wie die anderer Objekte gleicher Masse. Objekte können sie umkreisen.' },
       { kind: 'cloze', id: 'boundary', before: 'Die Grenze ohne Rückweg heißt', after: '.', answer: 'Ereignishorizont', distractors: ['Akkretionsscheibe', 'Sternhaufen'] },
@@ -33,6 +34,7 @@ export function previewLesson(locale: 'en' | 'de'): LessonDeck {
     cards: [
       { kind: 'idea', id: 'horizon', anchor: 'c', title: 'A boundary with no return', body: 'The event horizon is the boundary of a black hole. From inside this boundary, no signal can reach the outside, including light.' },
       { kind: 'flip', id: 'light', front: 'Can light escape from inside the event horizon?', back: 'No. Inside the event horizon, all future paths lead farther inward.' },
+      { kind: 'flip', id: 'spaghetti', front: 'What is spaghettification?', back: 'The stretching of an object by tidal forces near a black hole: gravity pulls its near end much harder than its far end.' },
       { kind: 'mcq', id: 'mass', prompt: 'If the Sun became a black hole of the same mass, what would happen to Earth’s orbit?', options: ['It would stay roughly the same.', 'Earth would be sucked in immediately.', 'Earth would fly away.'], answerIndex: 0, why: 'At this distance the gravitational pull is the same. Earth would lose sunlight and warmth, though.', confidence: true },
       { kind: 'swipe', id: 'vacuum', statement: 'Black holes suck in everything in the universe.', isTrue: false, why: 'Far away, their gravity acts like that of any object of the same mass. Objects can orbit them.' },
       { kind: 'cloze', id: 'boundary', before: 'The boundary of no return is the', after: '.', answer: 'event horizon', distractors: ['accretion disk', 'star cluster'] },
