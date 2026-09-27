@@ -32,7 +32,7 @@ const en = {
   personalization: {
     title: 'Personalization', voice: 'Daimon’s voice', voiceHelper: 'How Daimon sounds when it answers you.',
     styles: { default: 'Balanced', professional: 'Precise', friendly: 'Warm', candid: 'Direct', quirky: 'Playful', efficient: 'Brief' },
-    styleHints: { default: 'Clear and even', professional: 'Exact, technical', friendly: 'Kind and encouraging', candid: 'Straight to the point', quirky: 'Light, with wit', efficient: 'As short as possible' },
+    styleHints: { default: 'Clear and even', professional: 'Exact, technical', friendly: 'Kind, encouraging', candid: 'Straight to the point', quirky: 'Light, with wit', efficient: 'As short as possible' },
     sampleQuestion: 'Why is the sky blue?',
     samples: {
       default: 'Sunlight scatters off the air, and blue light scatters the most, so it reaches your eyes from every direction.',
@@ -92,7 +92,7 @@ const de: typeof en = {
   personalization: {
     title: 'Personalisierung', voice: 'Daimons Stimme', voiceHelper: 'Wie Daimon klingt, wenn es dir antwortet.',
     styles: { default: 'Ausgewogen', professional: 'Präzise', friendly: 'Herzlich', candid: 'Direkt', quirky: 'Verspielt', efficient: 'Knapp' },
-    styleHints: { default: 'Klar und ruhig', professional: 'Genau und fachlich', friendly: 'Freundlich und ermutigend', candid: 'Ohne Umwege', quirky: 'Leicht, mit Witz', efficient: 'So kurz wie möglich' },
+    styleHints: { default: 'Klar und ruhig', professional: 'Genau und fachlich', friendly: 'Freundlich, ermutigend', candid: 'Ohne Umwege', quirky: 'Leicht, mit Witz', efficient: 'So kurz wie möglich' },
     sampleQuestion: 'Warum ist der Himmel blau?',
     samples: {
       default: 'Sonnenlicht wird an der Luft gestreut, blaues Licht am stärksten. Deshalb erreicht es dein Auge aus allen Richtungen.',

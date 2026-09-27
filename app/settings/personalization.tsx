@@ -133,7 +133,7 @@ const VoiceTile = React.memo(function VoiceTile({ value, label, hint, selected, 
     style={{ width: '48.6%', minHeight: 68, borderRadius: radius.row, paddingHorizontal: 14, paddingVertical: 11, justifyContent: 'center', backgroundColor: selected ? c.raised : c.surface, borderWidth: 1.5, borderColor: selected ? c.accent : 'transparent' }}
   >
     <Text style={{ ...type.label, color: c.text }}>{label}</Text>
-    <Text numberOfLines={1} style={{ ...type.helper, color: c.muted, marginTop: 2 }}>{hint}</Text>
+    <Text numberOfLines={2} style={{ ...type.helper, color: c.muted, marginTop: 2 }}>{hint}</Text>
   </PressableScale>;
 });
 
