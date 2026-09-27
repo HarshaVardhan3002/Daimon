@@ -6,6 +6,7 @@ import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withSpring
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font, motion, radius, type } from '../design/tokens';
 import { usePalette, useThemeMode } from '../design/useTheme';
+import { useStrings } from '../i18n/strings';
 import { createStore, useStore } from '../state/store';
 import { Icon, type FeatherName } from './icons';
 import { PressableScale, haptic } from './PressableScale';
@@ -82,7 +83,7 @@ export function OverlayHost() {
 
 const MENU_MARGIN = 12;
 function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
-  const c = usePalette();
+  const c = usePalette(); const strings = useStrings();
   const mode = useThemeMode();
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
@@ -112,7 +113,7 @@ function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
 
   return <View style={{ position: 'absolute', inset: 0, zIndex: 900, elevation: 30 }} accessibilityViewIsModal>
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
-    <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel="Close menu" />
+    <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel={strings.closeMenu} />
     {/* The card claims its own touches: a tap on its header or padding must not fall through and close the menu. */}
     <Animated.View onLayout={onLayout} onStartShouldSetResponder={() => true} style={[{ position: 'absolute', top: size ? top : -9999, left: size ? left : 0, minWidth: spec.minWidth ?? 216, maxWidth: Math.min(320, screenW - MENU_MARGIN * 2), borderRadius: radius.card, backgroundColor: c.surface, paddingVertical: 6, transformOrigin: origin, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12 }, panelStyle]}>
       {spec.header ? <Text style={{ ...type.labelRegular, color: c.muted, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 6 }}>{spec.header}</Text> : null}
@@ -136,7 +137,7 @@ function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
 // Bottom sheet with drag-to-dismiss.
 
 function SheetView({ spec }: { spec: SheetSpec & { id: number } }) {
-  const c = usePalette();
+  const c = usePalette(); const strings = useStrings();
   const insets = useSafeAreaInsets();
   const { height: screenH } = useWindowDimensions();
   const offset = useSharedValue(screenH);
@@ -164,7 +165,7 @@ function SheetView({ spec }: { spec: SheetSpec & { id: number } }) {
   const scrimStyle = useAnimatedStyle(() => ({ opacity: 0.5 * (1 - Math.min(1, offset.value / Math.max(1, panelHeight.value))) }));
   return <View style={{ position: 'absolute', inset: 0, zIndex: 800, elevation: 28 }} accessibilityViewIsModal>
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
-    <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel="Close" />
+    <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel={strings.close} />
     <Animated.View onLayout={onLayout} onStartShouldSetResponder={() => true} style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: screenH * 0.88, backgroundColor: c.surface, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet, paddingBottom: insets.bottom + 8 }, panelStyle]}>
       <GestureDetector gesture={drag}>
         <View style={{ paddingTop: 10, paddingBottom: spec.title ? 4 : 8 }}>

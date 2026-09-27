@@ -23,7 +23,7 @@ const en = {
   readAloudFailed: 'Could not read aloud', shareFailed: 'Could not share', attachedImage: 'Attached image', imageInDraft: 'Image in draft', removeImage: 'Remove image', removeFile: 'Remove file',
   // Header menu
   shareChat: 'Share', rename: 'Rename', delete: 'Delete', forgetDocument: 'Forget document context', settings: 'Settings',
-  renameTitle: 'Rename chat', renamePlaceholder: 'Chat name', save: 'Save', cancel: 'Cancel',
+  renameTitle: 'Rename chat', renamePlaceholder: 'Chat name', save: 'Save', cancel: 'Cancel', close: 'Close', closeMenu: 'Close menu',
   deleteTitle: 'Delete chat?', deleteMessage: (title: string) => `This will delete “${title}”.`, deleted: 'Chat deleted',
   you: 'You',
   // Drawer
@@ -55,7 +55,7 @@ const de: Strings = {
   regenerating: 'Wird neu generiert…', responseStopped: 'Antwort angehalten', responseFailed: 'Antwort konnte nicht geladen werden', retryUnavailable: ' · Erneut versuchen nicht mehr verfügbar',
   readAloudFailed: 'Vorlesen nicht möglich', shareFailed: 'Teilen nicht möglich', attachedImage: 'Angehängtes Bild', imageInDraft: 'Bild im Entwurf', removeImage: 'Bild entfernen', removeFile: 'Datei entfernen',
   shareChat: 'Teilen', rename: 'Umbenennen', delete: 'Löschen', forgetDocument: 'Dateikontext entfernen', settings: 'Einstellungen',
-  renameTitle: 'Chat umbenennen', renamePlaceholder: 'Name des Chats', save: 'Speichern', cancel: 'Abbrechen',
+  renameTitle: 'Chat umbenennen', renamePlaceholder: 'Name des Chats', save: 'Speichern', cancel: 'Abbrechen', close: 'Schließen', closeMenu: 'Menü schließen',
   deleteTitle: 'Chat löschen?', deleteMessage: (title: string) => `„${title}“ wird gelöscht.`, deleted: 'Chat gelöscht',
   you: 'Du',
   searchChats: 'Chats durchsuchen', recents: 'Zuletzt', noChats: 'Noch keine Chats', chat: 'Chat', profile: 'Profil und Einstellungen', today: 'Heute', yesterday: 'Gestern', previous7: 'Letzte 7 Tage', older: 'Älter',

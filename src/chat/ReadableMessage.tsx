@@ -4,6 +4,7 @@ import React, { memo, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { font } from '../design/tokens';
+import { useStrings } from '../i18n/strings';
 import { haptic } from '../ui/PressableScale';
 import { CopyCheck } from '../ui/icons';
 import { parseInlineMarkdown, parseMarkdownBlocks, tokenizeCode } from './markdown';
@@ -31,6 +32,7 @@ function InlineText({ text, color, palette, fontSize = 16, lineHeight = 26, bold
 
 function CodeBlock({ code, language }: { code: string; language?: string }) {
   const tokens = useMemo(() => tokenizeCode(code, language), [code, language]);
+  const t = useStrings();
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void Clipboard.setStringAsync(code).then(() => { haptic('success'); setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => undefined);
@@ -38,9 +40,9 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   return <View style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 16, backgroundColor: CODE.background }}>
     <View style={{ height: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 14, backgroundColor: CODE.header }}>
       <Text style={{ color: CODE.label, fontFamily: font.medium, fontSize: 12 }}>{language || 'code'}</Text>
-      <Pressable onPress={copy} accessibilityRole="button" accessibilityLabel="Copy code" hitSlop={4} style={{ height: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <Pressable onPress={copy} accessibilityRole="button" accessibilityLabel={language ? `${t.copy}: ${language}` : t.copy} hitSlop={4} style={{ height: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <CopyCheck done={copied} size={15} color={CODE.label} />
-        <Text style={{ color: CODE.label, fontFamily: font.medium, fontSize: 12 }}>{copied ? 'Copied' : 'Copy'}</Text>
+        <Text style={{ color: CODE.label, fontFamily: font.medium, fontSize: 12 }}>{copied ? t.copied : t.copy}</Text>
       </Pressable>
     </View>
     <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 14 }}>
