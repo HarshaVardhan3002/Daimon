@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../chat/modelClient';
 import type { PendingChatRequest } from './chatSession';
-import type { Turn } from './AppState';
+import type { Turn } from './types';
 import type { DocumentAttachment } from '../chat/documentAttachment';
 
 function legacyActivityText(turn: Turn): string {

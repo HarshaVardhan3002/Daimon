@@ -1,5 +1,5 @@
 import type { ChatRequestError, PendingChatRequest } from './chatSession';
-import type { Turn } from './AppState';
+import type { Turn } from './types';
 
 function updateById(turns: Turn[], id: string, update: (turn: Turn) => Turn): Turn[] {
   let changed = false;

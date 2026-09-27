@@ -6,7 +6,7 @@ import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, u
 import { ActivityIndicator, AppState, Image, Linking, Platform, Pressable, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Animated, { Easing, interpolate, interpolateColor, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
 import { focusCameraAt, preferTexturePreview } from '../../modules/daimon-camera';
-import type { Locale } from '../design/theme';
+import type { Locale } from '../design/tokens';
 import { cameraAccess } from './cameraPermission';
 import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed, textureAttemptReducer, initialTextureAttempt, type CameraFlowState, type CapturedPhoto, type TextureAttempt, type TextureEvent } from './cameraFlow';
 

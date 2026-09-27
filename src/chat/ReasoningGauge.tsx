@@ -1,7 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
-import { themes } from '../design/theme';
-import type { ThemeMode } from '../design/theme';
+import { palettes as themes } from '../design/tokens';
+import type { ThemeMode } from '../design/tokens';
 import type { ReasoningMode } from './reasoningEffort';
 
 type Props = { mode: ReasoningMode; theme: ThemeMode };
