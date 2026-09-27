@@ -21,6 +21,7 @@ import { beginEdit, canRegenerate, copyText, freshAnswers, isBusy, regenerateTur
 import { errorText } from './errorText';
 import { GeneratedImage } from './GeneratedImage';
 import { QuizCard } from './QuizCard';
+import { LessonDeck } from './LessonDeck';
 import { validateQuizCardData } from './quizCardData';
 import { ReadableMessage } from './ReadableMessage';
 
@@ -164,6 +165,7 @@ function AssistantMessage({ turn }: { turn: Turn }) {
   const rich = legacySample ? undefined : turn.rich;
   const validatedQuiz = rich?.type === 'quiz' ? validateQuizCardData({ questions: rich.questions }) : undefined;
   const saveQuiz = (update: (quiz: Extract<NonNullable<Turn['rich']>, { type: 'quiz' }>) => Extract<NonNullable<Turn['rich']>, { type: 'quiz' }>) => updateTurnById(turn.id, current => current.rich?.type === 'quiz' ? { ...current, rich: update(current.rich) } : current);
+  const saveLesson = (update: (lesson: Extract<NonNullable<Turn['rich']>, { type: 'lesson' }>) => Extract<NonNullable<Turn['rich']>, { type: 'lesson' }>) => updateTurnById(turn.id, current => current.rich?.type === 'lesson' ? { ...current, rich: update(current.rich) } : current);
   const reveal = freshAnswers.has(turn.id);
   const sources = turn.sources ?? (preview && turn.status === 'complete' && answer ? previewSources : undefined);
 
@@ -190,6 +192,7 @@ function AssistantMessage({ turn }: { turn: Turn }) {
     </View> : null}
     {answer ? <View accessibilityLabel={t.assistantLabel}><ReadableMessage text={answer} palette={c} reveal={reveal} /></View> : null}
     {rich?.type === 'generated_image' ? <GeneratedImage image={rich} palette={c} locale={turn.locale} showNotice={toast} /> : null}
+    {rich?.type === 'lesson' ? <LessonDeck key={turn.id} turnId={turn.id} lesson={rich} onChange={saveLesson} /> : null}
     {rich?.type === 'quiz' && validatedQuiz?.ok ? <QuizCard data={validatedQuiz.data} currentIndex={rich.currentIndex} answers={rich.answers} completed={rich.completed} onAnswerChange={(questionId, choiceId) => saveQuiz(quiz => ({ ...quiz, answers: { ...quiz.answers, [questionId]: choiceId } }))} onIndexChange={currentIndex => saveQuiz(quiz => ({ ...quiz, currentIndex }))} onComplete={() => saveQuiz(quiz => ({ ...quiz, completed: true }))} palette={{ text: c.text, muted: c.muted, surface: c.canvas, line: c.line, accent: c.accent, correct: c.success, incorrect: c.danger }} /> : null}
     {answer ? <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
       <AnswerActions turn={turn} answer={answer} />
