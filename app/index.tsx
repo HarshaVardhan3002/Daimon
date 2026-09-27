@@ -20,6 +20,7 @@ import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
 import { ReasoningGauge } from '../src/chat/ReasoningGauge';
 import { GeneratedImage } from '../src/chat/GeneratedImage';
 import { CameraSheet, type CameraSheetHandle, type CameraSheetRect } from '../src/chat/CameraSheet';
+import { cameraAccess } from '../src/chat/cameraPermission';
 import type { CapturedPhoto } from '../src/chat/cameraFlow';
 import { persistRichReply } from '../src/chat/richReply';
 import { validateQuizCardData } from '../src/chat/quizCardData';
@@ -75,7 +76,7 @@ export default function HomeScreen() {
   const attachmentBoundsRef = useRef<View>(null); const attachmentPlusRef = useRef<View>(null);
   const [dialKeyboardBottomOffset, setDialKeyboardBottomOffset] = useState(0);
   const [cameraOpen, setCameraOpen] = useState(false); const [cameraOrigin, setCameraOrigin] = useState<CameraSheetRect | null>(null); const [cameraExitTo, setCameraExitTo] = useState<CameraSheetRect | null>(null);
-  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
+  const cameraSheetRef = useRef<CameraSheetHandle>(null); const cameraOpenRef = useRef(false); const cameraAskingRef = useRef(false); const cameraRestoresKeyboardRef = useRef(false);
   // 0 → 1 while the attachment menu hands off to the camera sheet growing out of it.
   const attachmentCameraHandoff = useSharedValue(0);
   // 1 while the camera sheet is drawn over the menu card's place; the card itself hides so the two never double up.
@@ -121,9 +122,15 @@ export default function HomeScreen() {
     attachmentCameraHandoff.value = 0;
     setAttachmentMenuVisible(false);
   }, [attachmentCameraHandoff, attachmentMenuProgress]);
-  const openCamera = useCallback(() => {
+  const openCamera = useCallback(async () => {
+    if (cameraOpenRef.current || cameraAskingRef.current) return;
     const fromMenu = attachmentMenuVisible;
-    cameraRestoresKeyboardRef.current = keyboardVisible;
+    const restoreKeyboard = keyboardVisible;
+    // Ask before the sheet opens. Android pauses the app behind its permission dialog, and a sheet that finished growing
+    // during that pause came back open but invisible (still catching taps) once the app resumed.
+    cameraAskingRef.current = true;
+    try { await cameraAccess(true); } catch { /* the sheet reads access again and shows its denied state */ } finally { cameraAskingRef.current = false; }
+    cameraRestoresKeyboardRef.current = restoreKeyboard;
     // Blur explicitly: a still-focused input would ignore the next tap and the keyboard would not come back after the camera.
     inputRef.current?.blur(); Keyboard.dismiss(); keyboardScrim?.hide(); setReasoningDialOpen(false); setChatActionsOpen(false);
     setCameraOrigin(fromMenu ? { x: 22, y: attachmentTargetTop.value, width: ATTACHMENT_MENU_WIDTH, height: ATTACHMENT_MENU_HEIGHT } : null);
@@ -414,7 +421,7 @@ export default function HomeScreen() {
     { key: 'photos' as const, label: locale === 'de' ? 'Fotos' : 'Photos', icon: 'image' as const },
     { key: 'files' as const, label: locale === 'de' ? 'Dateien' : 'Files', icon: 'folder' as const },
   ]).map(item => <Pressable key={item.key} disabled={!live || !attachmentMenuInteractive} onPress={() => {
-    if (item.key === 'camera') openCamera();
+    if (item.key === 'camera') void openCamera();
     else void chooseAttachment(item.key);
   }} accessible={live} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ disabled: !attachmentMenuInteractive }} style={({ pressed }) => ({ minHeight: 66, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 17, backgroundColor: pressed ? c.raised : 'transparent' })}>
     <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Feather name={item.icon} size={19} color={c.text} /></View>

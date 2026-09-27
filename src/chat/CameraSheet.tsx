@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import { Camera, CameraView, type CameraType } from 'expo-camera';
+import { CameraView, type CameraType } from 'expo-camera';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useReducer, useRef, useState } from 'react';
@@ -7,6 +7,7 @@ import { ActivityIndicator, AppState, Image, Linking, Platform, Pressable, Text,
 import Animated, { Easing, interpolate, interpolateColor, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
 import { focusCameraAt, preferTexturePreview } from '../../modules/daimon-camera';
 import type { Locale } from '../design/theme';
+import { cameraAccess } from './cameraPermission';
 import { canCapture, canDismissFromOutside, cameraFlowReducer, initialCameraFlow, isCameraMounted, isPreviewRevealed, textureAttemptReducer, initialTextureAttempt, type CameraFlowState, type CapturedPhoto, type TextureAttempt, type TextureEvent } from './cameraFlow';
 
 export type CameraSheetRect = { x: number; y: number; width: number; height: number };
@@ -85,7 +86,6 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
   // Reducer state lags a render behind; this blocks a second shutter tap landing in the same frame.
   const captureInFlightRef = useRef(false);
   const lastPhotoRef = useRef<CapturedPhoto | undefined>(undefined);
-  const permissionRequestRef = useRef<ReturnType<typeof Camera.requestCameraPermissionsAsync> | null>(null);
 
   const width = size?.width ?? 0; const height = size?.height ?? 0;
   const sheetHeight = Math.round(Math.max(0, Math.min(width * VIEWFINDER_RATIO, height - topReserve)));
@@ -101,13 +101,7 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
 
   const checkPermission = useCallback(async (session: number, ask: boolean) => {
     try {
-      let result = await Camera.getCameraPermissionsAsync();
-      if (!result.granted && result.canAskAgain && ask) {
-        // A reopen while the system dialog is still up joins that request instead of stacking a second dialog.
-        permissionRequestRef.current ??= Camera.requestCameraPermissionsAsync().finally(() => { permissionRequestRef.current = null; });
-        result = await permissionRequestRef.current;
-      }
-      dispatch({ type: 'permission', session, permission: result.granted ? 'granted' : result.canAskAgain ? 'denied' : 'blocked' });
+      dispatch({ type: 'permission', session, permission: await cameraAccess(ask) });
     } catch {
       dispatch({ type: 'permission', session, permission: 'denied' });
     }
@@ -153,7 +147,8 @@ export const CameraSheet = memo(forwardRef<CameraSheetHandle, Props>(function Ca
     }
     progress.value = withTiming(1, reducedMotion ? instant : fromMenu ? GROW : SLIDE_IN, finished => { if (finished) runOnJS(markExpanded)(session); });
     onEnterStart?.();
-    void checkPermission(session, true);
+    // Only reads access: the parent asks before opening, so no system dialog pauses the app while the sheet grows.
+    void checkPermission(session, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.session, hasSize]);
 
