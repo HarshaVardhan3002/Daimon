@@ -104,8 +104,20 @@ test('Backgrounding releases the camera and returning warms up a fresh preview; 
   assert.deepEqual(resumed.photo, photo);
 });
 
-test('Start failures can be retried with a new preview', () => {
+test('A first start failure remounts quietly; a second one shows the error', () => {
   const state = live();
+  const quiet = run(state, { type: 'mountError', session: state.session, mountKey: state.mountKey });
+  assert.equal(quiet.phase, 'camera');
+  assert.equal(quiet.mountKey, state.mountKey + 1);
+  const failed = run(quiet, { type: 'mountError', session: quiet.session, mountKey: quiet.mountKey });
+  assert.equal(failed.phase, 'error');
+  // A preview that starts clears the quiet retry, so a later failure gets one again.
+  const recovered = run(quiet, { type: 'ready', session: quiet.session, mountKey: quiet.mountKey });
+  assert.equal(recovered.autoRetried, false);
+});
+
+test('Start failures can be retried with a new preview', () => {
+  const state = { ...live(), autoRetried: true };
   const failed = run(state, { type: 'mountError', session: state.session, mountKey: state.mountKey });
   assert.equal(failed.phase, 'error');
   const retry = run(failed, { type: 'retry' });
