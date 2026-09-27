@@ -74,6 +74,10 @@ logs/
 /src/preferences/
 /src/learning/*
 !/src/learning/liveProgress.ts
+!/src/learning/deck.ts
+!/src/learning/lessonPersistence.ts
+!/src/learning/taste.ts
+!/src/learning/tasteMath.ts
 /src/liveModel/client.ts
 /src/liveModel/index.ts
 /src/liveModel/validate.ts

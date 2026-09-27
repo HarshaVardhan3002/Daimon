@@ -14,6 +14,7 @@ import { type } from '../src/design/tokens';
 import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useStrings } from '../src/i18n/strings';
 import { hydrateAccount, useAccount } from '../src/state/accountStore';
+import { hydrateLearningTaste } from '../src/learning/taste';
 import { hydrateApp, useApp } from '../src/state/appStore';
 import { startProbes } from '../src/telemetry/probes';
 import { hydrateTelemetry, track } from '../src/telemetry/telemetry';
@@ -25,6 +26,7 @@ void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 // Start reading storage before the first render; the native splash covers the wait.
 void hydrateApp();
 void hydrateAccount();
+void hydrateLearningTaste();
 void hydrateTelemetry();
 startProbes();
 track('app_open', { cold: true });
