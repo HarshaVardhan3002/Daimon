@@ -47,30 +47,37 @@ function RootNavigator() {
   const signedIn = useAccount(state => Boolean(state.session));
   const mode = useThemeMode();
   const c = usePalette();
-  useEffect(() => { const timer = setTimeout(() => setFontTimeout(true), FONT_TIMEOUT_MS); return () => clearTimeout(timer); }, []);
+  useEffect(() => {
+    if (fontsLoaded || fontError) return;
+    const timer = setTimeout(() => setFontTimeout(true), FONT_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [fontError, fontsLoaded]);
   const fontsReady = fontsLoaded || Boolean(fontError) || fontTimeout;
   const ready = fontsReady && hydration !== 'loading' && accountReady;
   // Only once the app renders (under the splash overlay): earlier, a light canvas would flash between splash frames.
   useEffect(() => { if (ready) void SystemUI.setBackgroundColorAsync(c.canvas).catch(() => undefined); }, [c.canvas, ready]);
-  if (!ready) return null;
   const healthy = hydration === 'ready';
+  // The splash overlay renders from the first commit so it can take over from the native splash while fonts and
+  // storage load; the app mounts under it once ready. It stays in one place in the tree so it never remounts.
   return <>
-    <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
-    {healthy ? <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.canvas }, animation: 'slide_from_right', animationDuration: 280, gestureEnabled: true }}>
-      <Stack.Protected guard={signedIn}>
-        <Stack.Screen name="index" options={{ animation: 'fade' }} />
-        <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
-        <Stack.Screen name="settings/index" />
-        <Stack.Screen name="settings/personalization" />
-        <Stack.Screen name="settings/memory" />
-      </Stack.Protected>
-      <Stack.Protected guard={!signedIn}>
-        <Stack.Screen name="welcome" options={{ animation: 'fade' }} />
-        <Stack.Screen name="sign-in" />
-      </Stack.Protected>
-    </Stack> : <HydrationProblem />}
-    <OverlayHost />
-    <SplashOverlay background="#000000" />
+    {ready ? <>
+      <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
+      {healthy ? <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.canvas }, animation: 'slide_from_right', animationDuration: 280, gestureEnabled: true }}>
+        <Stack.Protected guard={signedIn}>
+          <Stack.Screen name="index" options={{ animation: 'fade' }} />
+          <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
+          <Stack.Screen name="settings/index" />
+          <Stack.Screen name="settings/personalization" />
+          <Stack.Screen name="settings/memory" />
+        </Stack.Protected>
+        <Stack.Protected guard={!signedIn}>
+          <Stack.Screen name="welcome" options={{ animation: 'fade' }} />
+          <Stack.Screen name="sign-in" />
+        </Stack.Protected>
+      </Stack> : <HydrationProblem />}
+      <OverlayHost />
+    </> : <StatusBar style="light" />}
+    <SplashOverlay background="#000000" ready={ready} />
   </>;
 }
 
