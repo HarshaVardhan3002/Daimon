@@ -277,55 +277,54 @@ export default function ChatScreen() {
   const showGlobalError = shouldShowGlobalChatError(currentRequest(), requestStatus === 'error' && Boolean(requestError));
   const effortLabels = useMemo(() => ({ instant: t.effortLabel.instant, medium: locale === 'de' ? 'Mittlerer' : 'Medium', high: locale === 'de' ? 'Hoher' : 'High', effort: t.effortWord, chooseEffort: t.chooseEffort }), [locale, t]);
 
-  return <View style={{ flex: 1, backgroundColor: c.drawer }}>
+  // The drawer gesture covers both panels, so an open drawer can also be swiped shut from the drawer itself.
+  return <GestureDetector gesture={drawerGesture}><View style={{ flex: 1, backgroundColor: c.drawer }}>
     <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, width: drawerWidth }, drawerStyle]} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}>
       <ChatDrawer width={drawerWidth} topInset={insets.top} bottomInset={insets.bottom} onClose={closeDrawer} onNewChat={newChat} busy={requestStatus === 'loading'} />
     </Animated.View>
-    <GestureDetector gesture={drawerGesture}>
-      <Animated.View style={[{ flex: 1, backgroundColor: c.canvas, overflow: 'hidden' }, chatStyle]}>
-        <View ref={boundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen || cameraOpen} importantForAccessibility={drawerOpen || cameraOpen ? 'no-hide-descendants' : 'auto'}>
-          {isEmpty ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 24, right: 24, top: topPadding, bottom: 140, alignItems: 'center', justifyContent: 'center' }, greetingStyle]}>
-            <Animated.Text key={activeChatId} entering={reducedMotion ? undefined : FadeIn.duration(360).delay(60)} style={{ ...type.display, color: c.text, textAlign: 'center' }}>{t.greeting}</Animated.Text>
-          </Animated.View> : null}
-          <KeyboardChatScrollView ref={scrollRef} keyboardLiftBehavior="whenAtEnd" offset={insets.bottom} extraContentPadding={composerHeight} blankSpace={blankSpace}
-            onEndVisible={visible => { 'worklet'; atEnd.value = visible; }} onLayout={onScrollLayout} onContentSizeChange={onContentSize}
-            keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-            <Turns topPadding={topPadding} viewport={viewport} blankSpace={blankSpace} scrollRef={scrollRef} />
-          </KeyboardChatScrollView>
-          <ChatHeader topInset={insets.top} onMenu={openDrawer} onNewChat={newChat} />
-          <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', alignSelf: 'center', zIndex: 5 }, fabStyle]}>
-            <IconButton label={t.scrollToBottom} size={38} variant="surface" onPress={() => scrollRef.current?.scrollToEnd({ animated: true })} style={{ borderWidth: 1, borderColor: c.line }}>
-              <Icon name="arrow-down" size={19} color={c.text} />
-            </IconButton>
-          </Animated.View>
-          <StickyComposer bottomInset={insets.bottom} height={composerHeight}>
-            {showGlobalError && requestError ? <Animated.View entering={FadeIn} exiting={FadeOut} accessibilityLiveRegion="polite" style={{ marginHorizontal: 16, marginBottom: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={{ ...type.helper, flex: 1, color: c.muted }}>{errorText(locale, requestError)}</Text>
-              {!requestError.startsWith('document_') ? <PressableScale onPress={() => retryRequest()} accessibilityRole="button" style={{ minHeight: 36, paddingHorizontal: 8, justifyContent: 'center' }}><Text style={{ ...type.label, fontSize: 13, color: c.accent }}>{t.retry}</Text></PressableScale> : null}
-              <IconButton label={t.cancel} size={30} onPress={dismissRequestError}><Icon name="x" size={16} color={c.muted} /></IconButton>
-            </Animated.View> : null}
-            {legacyPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 16, backgroundColor: c.surface }}><Text style={{ ...type.helper, color: c.muted }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
-            <Composer ref={composerRef} plusRef={plusRef} onPlus={openMenu} onOpenDial={() => { haptic('selection'); setDialOpen(true); }} plusOpen={menuSheetOpen} dialOpen={dialOpen} bottomInset={insets.bottom} />
-          </StickyComposer>
-          {menuVisible ? <PlusMenu sheetOpen={menuSheetOpen} interactive={menuInteractive} thinkHarder={thinkHarder} progress={menuProgress} originLeft={originLeft} originTop={originTop} targetTop={targetTop} handoff={handoff} covering={covering} onClose={closeMenu} onSelect={onMenuSelect} /> : null}
-        </View>
-        {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
-        <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={insets.top + HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} />
-        {dialOpen && !menuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityViewIsModal onAccessibilityEscape={() => setDialOpen(false)} style={{ position: 'absolute', zIndex: 110, elevation: 26, inset: 0 }}>
-          <Pressable onPress={() => setDialOpen(false)} accessibilityRole="button" accessibilityLabel={t.closeDial} style={{ position: 'absolute', inset: 0, backgroundColor: '#00000073' }} />
-          <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, alignItems: 'center' }, dialPosition]}>
-            <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(220).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150)} style={{ alignItems: 'center', width: '100%' }}>
-              <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={effortLabels} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
-              {hasAttachment && reasoningMode !== 'default' ? <Text style={{ ...type.helper, width: '84%', color: '#D0D0D0', marginTop: 8, textAlign: 'center' }}>{errorText(locale, 'reasoning_image_unsupported')}</Text> : null}
-            </Animated.View>
-          </Animated.View>
+    <Animated.View style={[{ flex: 1, backgroundColor: c.canvas, overflow: 'hidden' }, chatStyle]}>
+      <View ref={boundsRef} style={{ flex: 1 }} accessibilityElementsHidden={drawerOpen || cameraOpen} importantForAccessibility={drawerOpen || cameraOpen ? 'no-hide-descendants' : 'auto'}>
+        {isEmpty ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 24, right: 24, top: topPadding, bottom: 140, alignItems: 'center', justifyContent: 'center' }, greetingStyle]}>
+          <Animated.Text key={activeChatId} entering={reducedMotion ? undefined : FadeIn.duration(360).delay(60)} style={{ ...type.display, color: c.text, textAlign: 'center' }}>{t.greeting}</Animated.Text>
         </Animated.View> : null}
-        <Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim, zIndex: 200 }, dimStyle]}>
-          <Pressable style={{ flex: 1 }} onPress={closeDrawer} accessibilityRole="button" accessibilityLabel={t.cancel} />
+        <KeyboardChatScrollView ref={scrollRef} keyboardLiftBehavior="whenAtEnd" offset={insets.bottom} extraContentPadding={composerHeight} blankSpace={blankSpace}
+          onEndVisible={visible => { 'worklet'; atEnd.value = visible; }} onLayout={onScrollLayout} onContentSizeChange={onContentSize}
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+          <Turns topPadding={topPadding} viewport={viewport} blankSpace={blankSpace} scrollRef={scrollRef} />
+        </KeyboardChatScrollView>
+        <ChatHeader topInset={insets.top} onMenu={openDrawer} onNewChat={newChat} />
+        <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', alignSelf: 'center', zIndex: 5 }, fabStyle]}>
+          <IconButton label={t.scrollToBottom} size={38} variant="surface" onPress={() => scrollRef.current?.scrollToEnd({ animated: true })} style={{ borderWidth: 1, borderColor: c.line }}>
+            <Icon name="arrow-down" size={19} color={c.text} />
+          </IconButton>
         </Animated.View>
+        <StickyComposer bottomInset={insets.bottom} height={composerHeight}>
+          {showGlobalError && requestError ? <Animated.View entering={FadeIn} exiting={FadeOut} accessibilityLiveRegion="polite" style={{ marginHorizontal: 16, marginBottom: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ ...type.helper, flex: 1, color: c.muted }}>{errorText(locale, requestError)}</Text>
+            {!requestError.startsWith('document_') ? <PressableScale onPress={() => retryRequest()} accessibilityRole="button" style={{ minHeight: 36, paddingHorizontal: 8, justifyContent: 'center' }}><Text style={{ ...type.label, fontSize: 13, color: c.accent }}>{t.retry}</Text></PressableScale> : null}
+            <IconButton label={t.cancel} size={30} onPress={dismissRequestError}><Icon name="x" size={16} color={c.muted} /></IconButton>
+          </Animated.View> : null}
+          {legacyPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 16, backgroundColor: c.surface }}><Text style={{ ...type.helper, color: c.muted }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
+          <Composer ref={composerRef} plusRef={plusRef} onPlus={openMenu} onOpenDial={() => { haptic('selection'); setDialOpen(true); }} plusOpen={menuSheetOpen} dialOpen={dialOpen} bottomInset={insets.bottom} />
+        </StickyComposer>
+        {menuVisible ? <PlusMenu sheetOpen={menuSheetOpen} interactive={menuInteractive} thinkHarder={thinkHarder} progress={menuProgress} originLeft={originLeft} originTop={originTop} targetTop={targetTop} handoff={handoff} covering={covering} onClose={closeMenu} onSelect={onMenuSelect} /> : null}
+      </View>
+      {/* Kept mounted (camera off while closed) so its first growing frame lands together with the menu hand-off. */}
+      <CameraSheet ref={cameraSheetRef} open={cameraOpen} origin={cameraOrigin} exitTo={cameraExitTo} ghost={cameraGhost} locale={locale} palette={cameraPalette} reducedMotion={reducedMotion} bottomInset={insets.bottom} topReserve={insets.top + HEADER_HEIGHT + 8} onRequestClose={closeCamera} onEnterStart={onCameraEnterStart} onExited={onCameraExited} onAccept={attachCapturedPhoto} />
+      {dialOpen && !menuVisible ? <Animated.View entering={FadeIn.duration(reducedMotion ? 1 : 170)} exiting={FadeOut.duration(reducedMotion ? 1 : 130)} pointerEvents="box-none" accessibilityViewIsModal onAccessibilityEscape={() => setDialOpen(false)} style={{ position: 'absolute', zIndex: 110, elevation: 26, inset: 0 }}>
+        <Pressable onPress={() => setDialOpen(false)} accessibilityRole="button" accessibilityLabel={t.closeDial} style={{ position: 'absolute', inset: 0, backgroundColor: '#00000073' }} />
+        <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, alignItems: 'center' }, dialPosition]}>
+          <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(220).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150)} style={{ alignItems: 'center', width: '100%' }}>
+            <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={effortLabels} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
+            {hasAttachment && reasoningMode !== 'default' ? <Text style={{ ...type.helper, width: '84%', color: '#D0D0D0', marginTop: 8, textAlign: 'center' }}>{errorText(locale, 'reasoning_image_unsupported')}</Text> : null}
+          </Animated.View>
+        </Animated.View>
+      </Animated.View> : null}
+      <Animated.View pointerEvents={drawerOpen ? 'auto' : 'none'} style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim, zIndex: 200 }, dimStyle]}>
+        <Pressable style={{ flex: 1 }} onPress={closeDrawer} accessibilityRole="button" accessibilityLabel={t.cancel} />
       </Animated.View>
-    </GestureDetector>
-  </View>;
+    </Animated.View>
+  </View></GestureDetector>;
 }
 
 /** The composer rides the keyboard; its bottom padding (the gesture bar) is given back while the keyboard is up. */
