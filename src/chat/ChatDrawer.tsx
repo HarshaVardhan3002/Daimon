@@ -6,6 +6,7 @@ import { usePalette } from '../design/useTheme';
 import { useStrings } from '../i18n/strings';
 import { useAccount } from '../state/accountStore';
 import { activeChatTitle, appStore, deleteChat, hasActiveContent, openSavedConversation, renameChat, useApp } from '../state/appStore';
+import { track } from '../telemetry/telemetry';
 import { ComposeGlyph, Icon } from '../ui/icons';
 import { IconButton } from '../ui/IconButton';
 import { confirm, openMenuFrom, prompt, toast } from '../ui/overlays';
@@ -21,8 +22,8 @@ const Row = memo(function Row({ id, title, active, disabled, onOpen }: { id: str
     openMenuFrom(ref.current, {
       align: 'left',
       items: [
-        { key: 'rename', label: t.rename, icon: 'edit-3', onPress: () => { void prompt({ title: t.renameTitle, initial: title, placeholder: t.renamePlaceholder, confirmLabel: t.save, cancelLabel: t.cancel }).then(value => { if (value) renameChat(id, value); }); } },
-        { key: 'delete', label: t.delete, icon: 'trash-2', danger: true, onPress: () => { void confirm({ title: t.deleteTitle, message: t.deleteMessage(title), confirmLabel: t.delete, cancelLabel: t.cancel, destructive: true }).then(ok => { if (ok) { deleteChat(id); toast(t.deleted); } }); } },
+        { key: 'rename', label: t.rename, icon: 'edit-3', onPress: () => { void prompt({ title: t.renameTitle, initial: title, placeholder: t.renamePlaceholder, confirmLabel: t.save, cancelLabel: t.cancel }).then(value => { if (value) { renameChat(id, value); track('chat_rename', {}); } }); } },
+        { key: 'delete', label: t.delete, icon: 'trash-2', danger: true, onPress: () => { void confirm({ title: t.deleteTitle, message: t.deleteMessage(title), confirmLabel: t.delete, cancelLabel: t.cancel, destructive: true }).then(ok => { if (ok) { track('chat_delete', { active: id === appStore.get().activeChatId }); deleteChat(id); toast(t.deleted); } }); } },
       ],
     });
   };

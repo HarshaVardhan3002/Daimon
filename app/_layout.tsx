@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import { Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, useFonts } from '@expo-google-fonts/inter';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
@@ -15,6 +15,9 @@ import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useStrings } from '../src/i18n/strings';
 import { hydrateAccount, useAccount } from '../src/state/accountStore';
 import { hydrateApp, useApp } from '../src/state/appStore';
+import { startProbes } from '../src/telemetry/probes';
+import { hydrateTelemetry, track } from '../src/telemetry/telemetry';
+import type { Screen } from '../src/telemetry/events';
 import { OverlayHost } from '../src/ui/overlays';
 import { PressableScale } from '../src/ui/PressableScale';
 
@@ -22,6 +25,17 @@ void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 // Start reading storage before the first render; the native splash covers the wait.
 void hydrateApp();
 void hydrateAccount();
+void hydrateTelemetry();
+startProbes();
+track('app_open', { cold: true });
+
+const SCREENS: Record<string, Screen> = { '/': 'chat', '/search': 'search', '/settings': 'settings', '/settings/personalization': 'personalization', '/settings/memory': 'memory', '/welcome': 'welcome', '/sign-in': 'sign_in' };
+
+function ScreenProbe() {
+  const path = usePathname();
+  useEffect(() => { const screen = SCREENS[path]; if (screen) track('screen_view', { screen }); }, [path]);
+  return null;
+}
 
 const FONT_TIMEOUT_MS = 2500;
 
@@ -75,6 +89,7 @@ function RootNavigator() {
           <Stack.Screen name="sign-in" />
         </Stack.Protected>
       </Stack> : <HydrationProblem />}
+      {healthy ? <ScreenProbe /> : null}
       <OverlayHost />
     </> : <StatusBar style="light" />}
     <SplashOverlay background="#000000" ready={ready} />

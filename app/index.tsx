@@ -20,7 +20,8 @@ import { isSupportedImage, persistImageAttachment } from '../src/chat/imageAttac
 import { PLUS_MENU_HEIGHT, PLUS_MENU_LEFT, PLUS_MENU_WIDTH, PlusMenu, PlusMenuRows, type PlusAction } from '../src/chat/PlusMenu';
 import { ReasoningEffortDial } from '../src/chat/ReasoningEffortDial';
 import { TurnView } from '../src/chat/TurnView';
-import { motion, type } from '../src/design/tokens';
+import { cosmos, motion, type } from '../src/design/tokens';
+import { track } from '../src/telemetry/telemetry';
 import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useStrings } from '../src/i18n/strings';
 import { appStore, setDocumentAttachment, setImageAttachment, setReasoningMode, setThinkHarder, startNewChat, useApp } from '../src/state/appStore';
@@ -66,7 +67,9 @@ export default function ChatScreen() {
   const drawer = useSharedValue(0);
   const dragStart = useSharedValue(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpenRef = useRef(false);
   const settleDrawer = useCallback((open: boolean) => {
+    if (drawerOpenRef.current !== open) { drawerOpenRef.current = open; track('drawer', { open }); }
     setDrawerOpen(open);
     drawer.value = withSpring(open ? 1 : 0, motion.settle);
   }, [drawer]);
@@ -76,7 +79,7 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!drawerCloseCount) return;
     // Snap shut: the chat is revealed as the screen above fades away, so there is nothing to animate.
-    setDrawerOpen(false); drawer.value = 0;
+    drawerOpenRef.current = false; setDrawerOpen(false); drawer.value = 0;
   }, [drawer, drawerCloseCount]);
 
   // ---- Plus menu and camera (the camera sheet grows out of the menu card and shrinks back into it).
@@ -235,7 +238,7 @@ export default function ChatScreen() {
     return () => sub.remove();
   }, [cameraOpen, closeDrawer, closeMenu, dialOpen, drawerOpen, keyboardVisible, menuSheetOpen, menuVisible]));
 
-  const newChat = useCallback(() => { startNewChat(); closeDrawer(); Keyboard.dismiss(); haptic('light'); }, [closeDrawer]);
+  const newChat = useCallback(() => { track('chat_new', { fromTurns: appStore.get().conversation.length }); startNewChat(); closeDrawer(); Keyboard.dismiss(); haptic('light'); }, [closeDrawer]);
 
   // ---- Scrolling: chats open at the end; a sent message is lifted under the header with room below for the answer.
   const viewport = useRef(0);
@@ -319,8 +322,8 @@ export default function ChatScreen() {
         <Pressable onPress={() => setDialOpen(false)} accessibilityRole="button" accessibilityLabel={t.closeDial} style={{ position: 'absolute', inset: 0, backgroundColor: '#00000073' }} />
         <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, alignItems: 'center' }, dialPosition]}>
           <Animated.View entering={reducedMotion ? undefined : SlideInDown.duration(220).easing(Easing.out(Easing.cubic))} exiting={reducedMotion ? undefined : SlideOutDown.duration(150)} style={{ alignItems: 'center', width: '100%' }}>
-            <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={effortLabels} colors={{ text: c.text, muted: c.muted, faint: c.faint, accent: '#A25BFF', line: c.line, selected: c.selected }} />
-            {hasAttachment && reasoningMode !== 'default' ? <Text style={{ ...type.helper, width: '84%', color: '#D0D0D0', marginTop: 8, textAlign: 'center' }}>{errorText(locale, 'reasoning_image_unsupported')}</Text> : null}
+            <ReasoningEffortDial value={reasoningMode} onChange={setReasoningMode} reducedMotion={reducedMotion} labels={effortLabels} />
+            {hasAttachment && reasoningMode !== 'default' ? <Text style={{ ...type.helper, width: '84%', color: cosmos.hud.muted, marginTop: 8, textAlign: 'center' }}>{errorText(locale, 'reasoning_image_unsupported')}</Text> : null}
           </Animated.View>
         </Animated.View>
       </Animated.View> : null}

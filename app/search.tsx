@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { router } from 'expo-router';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
@@ -13,6 +13,7 @@ import { turnTime, type SavedConversation, type Turn } from '../src/state/types'
 import { IconButton } from '../src/ui/IconButton';
 import { Icon } from '../src/ui/icons';
 import { PressableScale } from '../src/ui/PressableScale';
+import { track } from '../src/telemetry/telemetry';
 
 type ChatResult = { id: string; title: string; turns: Turn[]; active: boolean };
 type Match = { before: string; hit: string; after: string };
@@ -74,7 +75,15 @@ export default function SearchScreen() {
     const normalized = compact(query).toLocaleLowerCase();
     return normalized ? chats.filter(chat => compact(chat.title).toLocaleLowerCase().includes(normalized) || chat.turns.some(turn => compact(turn.prompt).toLocaleLowerCase().includes(normalized) || compact(turn.answer).toLocaleLowerCase().includes(normalized))) : chats;
   }, [active, activeId, conversation, query, saved, title]);
+  const resultCount = useRef(0);
+  resultCount.current = results.length;
+  const queryChars = useRef(0);
+  queryChars.current = query.trim().length;
+  const opened = useRef(false);
+  // One event per visit: how long the query got, how many results it left and whether a chat was opened.
+  useEffect(() => () => track('search', { queryChars: queryChars.current, results: resultCount.current, opened: opened.current }), []);
   const selectChat = useCallback((chat: ChatResult) => {
+    opened.current = true;
     if (!chat.active) openSavedConversation(chat.id);
     closeDrawerBehind();
     router.back();

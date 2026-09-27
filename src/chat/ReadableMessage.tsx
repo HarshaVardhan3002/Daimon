@@ -6,6 +6,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { font } from '../design/tokens';
 import { useStrings } from '../i18n/strings';
 import { haptic } from '../ui/PressableScale';
+import { track } from '../telemetry/telemetry';
 import { CopyCheck } from '../ui/icons';
 import { parseInlineMarkdown, parseMarkdownBlocks, tokenizeCode } from './markdown';
 
@@ -13,7 +14,7 @@ type Palette = { text: string; muted: string; raised: string; accent: string; li
 
 const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 // Code keeps a dark surface in both themes; the token colours are tuned for it.
-const CODE = { background: '#1C1C1C', header: '#2A2A2A', label: '#B4B4B4' };
+const CODE = { background: '#0F1019', header: '#1A1C2A', label: '#A4A6B9' };
 const codeColors: Record<string, string> = {
   plain: '#E6E6E7', keyword: '#52D4E4', function: '#E5D85C', string: '#A6E22E', number: '#AE81FF',
   comment: '#7D8590', key: '#F07178', literal: '#FFCB6B',
@@ -35,7 +36,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   const t = useStrings();
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    void Clipboard.setStringAsync(code).then(() => { haptic('success'); setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => undefined);
+    void Clipboard.setStringAsync(code).then(() => { haptic('success'); track('reply_copy', { target: 'code' }); setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => undefined);
   };
   return <View style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 16, backgroundColor: CODE.background }}>
     <View style={{ height: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 14, backgroundColor: CODE.header }}>

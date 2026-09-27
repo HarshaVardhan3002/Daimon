@@ -15,6 +15,7 @@ import { imageAttachmentDataUri } from './imageAttachment';
 import { ChatClientError, sendChatCompletion } from './modelClient';
 import { reasoningEffortForMode } from './reasoningEffort';
 import { persistRichReply } from './richReply';
+import { track, wordCount } from '../telemetry/telemetry';
 
 const CHAT_PROXY_URL = 'http://127.0.0.1:18765';
 
@@ -121,8 +122,11 @@ async function run(request: PendingChatRequest): Promise<void> {
     setActiveSession(current => ({ ...current, activeDocumentContext: documentContextAfterSuccess(current.activeDocumentContext, request.documentAttachment, Boolean(request.attachment)), retryableChatRequests: forgetRetryableRequest(current.retryableChatRequests, request.pendingTurnId ?? ''), pendingChatRequest: current.pendingChatRequest?.pendingTurnId === request.pendingTurnId ? undefined : current.pendingChatRequest }));
     chatUi.set({ requestStatus: 'idle', requestError: null });
     haptic('light');
+    track('reply_done', { ms: Date.now() - startedAt, chars: result.message.content.length, rich: result.message.rich?.type ?? 'none', effort: request.reasoningEffort ?? 'default' });
   } catch (error) {
     const kind = errorCode(error, Boolean(requestDocument));
+    if (kind === 'cancelled') track('reply_stop', { ms: Date.now() - startedAt });
+    else track('reply_error', { code: kind, ms: Date.now() - startedAt });
     const failed: PendingChatRequest = { ...request, status: 'error', error: kind };
     pending = failed;
     setActiveSession(current => ({ ...current, pendingChatRequest: failed }));
@@ -157,6 +161,7 @@ export function sendDraft(): boolean {
   setDocumentAttachment(current => current?.uri === start.documentUri ? undefined : current);
   chatUi.set({ pinnedTurnId: pendingTurnId, editingTurnId: null });
   haptic('light');
+  track('message_send', { chars: prompt.length, words: wordCount(prompt), image: Boolean(state.imageAttachment), document: Boolean(state.documentAttachment), effort: state.reasoningMode, edit: editIndex >= 0, turnIndex: base.length });
   void run(request);
   return true;
 }
@@ -201,6 +206,7 @@ export function regenerateTurn(turn: Turn): void {
   const pendingTurnId = turn.id;
   setConversation(current => updatePendingTurn(current, pendingTurnId, 'streaming'));
   chatUi.set({ pinnedTurnId: pendingTurnId });
+  track('reply_regenerate', { effort: state.reasoningMode });
   void run({ messages: buildChatContext(state.conversation.slice(0, -1), turn.prompt), prompt: turn.prompt, locale: turn.locale, draftSnapshot: state.draft, pendingTurnId, ...(effort ? { reasoningEffort: effort } : {}), status: 'loading' });
 }
 
@@ -208,6 +214,7 @@ export function beginEdit(turn: Turn): void {
   if (isBusy()) return;
   chatUi.set({ editingTurnId: turn.id });
   setDraft(turn.prompt);
+  track('prompt_edit', {});
 }
 export function cancelEdit(): void {
   if (!chatUi.get().editingTurnId) return;
@@ -215,20 +222,22 @@ export function cancelEdit(): void {
   setDraft('');
 }
 
-export async function copyText(text: string): Promise<boolean> {
-  try { await Clipboard.setStringAsync(text); haptic('success'); return true; }
+export async function copyText(text: string, target: 'answer' | 'prompt' | 'code' = 'answer'): Promise<boolean> {
+  try { await Clipboard.setStringAsync(text); haptic('success'); track('reply_copy', { target }); return true; }
   catch { toast(t().copyFailed); return false; }
 }
 
 export async function shareText(text: string): Promise<void> {
+  track('reply_share', {});
   try { await Share.share({ message: text }); }
   catch { toast(t().shareFailed); }
 }
 
 export async function toggleReadAloud(turn: Turn, text: string): Promise<void> {
   if (chatUi.get().speakingTurnId === turn.id) {
-    speechRun += 1; chatUi.set({ speakingTurnId: null }); await Speech.stop(); return;
+    speechRun += 1; chatUi.set({ speakingTurnId: null }); track('reply_read_aloud', { on: false }); await Speech.stop(); return;
   }
+  track('reply_read_aloud', { on: true });
   const runId = ++speechRun;
   chatUi.set({ speakingTurnId: null });
   await Speech.stop();

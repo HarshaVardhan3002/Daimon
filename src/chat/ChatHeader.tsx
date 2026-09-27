@@ -8,6 +8,7 @@ import { activeChatTitle, appStore, deleteChat, hasActiveContent, renameChat, se
 import { ComposeGlyph, Icon, MenuGlyph } from '../ui/icons';
 import { IconButton } from '../ui/IconButton';
 import { confirm, openMenuFrom, prompt, toast } from '../ui/overlays';
+import { track } from '../telemetry/telemetry';
 import { haptic } from '../ui/PressableScale';
 import { shareText, transcript } from './chatController';
 
@@ -31,12 +32,12 @@ export const ChatHeader = memo(function ChatHeader({ topInset, onMenu, onNewChat
       items: [
         { key: 'share', label: t.shareChat, icon: 'share-2', disabled: !inChat, onPress: () => void shareText(transcript()) },
         { key: 'rename', label: t.rename, icon: 'edit-3', disabled: !hasContent, onPress: () => {
-          void prompt({ title: t.renameTitle, initial: title, placeholder: t.renamePlaceholder, confirmLabel: t.save, cancelLabel: t.cancel }).then(value => { if (value) renameChat(id, value); });
+          void prompt({ title: t.renameTitle, initial: title, placeholder: t.renamePlaceholder, confirmLabel: t.save, cancelLabel: t.cancel }).then(value => { if (value) { renameChat(id, value); track('chat_rename', {}); } });
         } },
         ...(hasDocumentContext ? [{ key: 'forget', label: t.forgetDocument, icon: 'file-minus' as const, onPress: () => setActiveSession(current => ({ ...current, activeDocumentContext: undefined })) }] : []),
         { kind: 'divider', key: 'd' },
         { key: 'delete', label: t.delete, icon: 'trash-2', danger: true, disabled: !hasContent, onPress: () => {
-          void confirm({ title: t.deleteTitle, message: t.deleteMessage(title), confirmLabel: t.delete, cancelLabel: t.cancel, destructive: true }).then(ok => { if (ok) { deleteChat(id); haptic('success'); toast(t.deleted); } });
+          void confirm({ title: t.deleteTitle, message: t.deleteMessage(title), confirmLabel: t.delete, cancelLabel: t.cancel, destructive: true }).then(ok => { if (ok) { track('chat_delete', { active: true }); deleteChat(id); haptic('success'); toast(t.deleted); } });
         } },
       ],
     });

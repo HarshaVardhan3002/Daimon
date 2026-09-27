@@ -8,7 +8,8 @@ import { usePalette } from '../design/useTheme';
 import { formatWhen } from '../i18n/format';
 import { useStrings, type Strings } from '../i18n/strings';
 import { useAccount } from '../state/accountStore';
-import { branchFromTurn, updateTurnById, useApp } from '../state/appStore';
+import { appStore, branchFromTurn, updateTurnById, useApp } from '../state/appStore';
+import { track } from '../telemetry/telemetry';
 import { getLegacyActivityText } from '../state/chatHistory';
 import { turnTime, type AnswerSource, type Turn } from '../state/types';
 import { Icon, CopyCheck, SwapIcon } from '../ui/icons';
@@ -48,7 +49,7 @@ function UserMessage({ turn, fresh }: { turn: Turn; fresh: boolean }) {
       header: when ? formatWhen(when, locale) : undefined, align: 'right',
       lift: <UserBubble prompt={turn.prompt} background={c.user} color={c.userText} />,
       items: [
-        { key: 'copy', label: t.copy, icon: 'copy', onPress: () => { void copyText(turn.prompt).then(ok => { if (ok) toast(t.copied); }); } },
+        { key: 'copy', label: t.copy, icon: 'copy', onPress: () => { void copyText(turn.prompt, 'prompt').then(ok => { if (ok) toast(t.copied); }); } },
         { key: 'select', label: t.selectText, icon: 'type', onPress: () => openSheet({ title: t.selectText, render: () => <Text selectable style={{ ...type.body, color: c.text, paddingHorizontal: 22, paddingBottom: 16 }}>{turn.prompt}</Text> }) },
         { key: 'edit', label: t.editMessage, icon: 'edit-2', disabled: isBusy() || turn.status === 'streaming', onPress: () => beginEdit(turn) },
         { key: 'share', label: t.sharePrompt, icon: 'share-2', onPress: () => void shareText(turn.prompt) },
@@ -130,7 +131,7 @@ function AnswerActions({ turn, answer }: { turn: Turn; answer: string }) {
     openMenuFrom(moreRef.current, {
       header: answeredAt ? formatWhen(answeredAt, locale) : undefined, align: 'left',
       items: [
-        { key: 'branch', label: t.branch, icon: 'git-branch', onPress: () => { if (branchFromTurn(turn.id)) toast(t.branched); } },
+        { key: 'branch', label: t.branch, icon: 'git-branch', onPress: () => { if (branchFromTurn(turn.id)) { track('chat_branch', { atTurn: appStore.get().conversation.findIndex(item => item.id === turn.id) }); toast(t.branched); } } },
         { kind: 'divider', key: 'd1' },
         { kind: 'note', key: 'model', label: t.usedModel(model) },
         ...(canRegenerate(turn) ? [{ key: 'regenerate', label: t.regenerate, icon: 'rotate-cw' as const, onPress: () => regenerateTurn(turn) }] : []),
