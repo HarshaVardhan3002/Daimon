@@ -12,7 +12,8 @@ appId: ${APP_ID}
     when:
       visible: "Sign in"
     file: _sign-in.yaml
-- tapOn: "Message Daimon"
+- tapOn:
+    id: "composer-input"
 - inputText: "dial check"
 - waitForAnimationToEnd
 - takeScreenshot: ios-13-keyboard-draft

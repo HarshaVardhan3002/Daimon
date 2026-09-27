@@ -116,6 +116,9 @@ jobs:
       # Maestro drives the app through XCUITest on the simulator. Screenshots land in artifacts/ui.
       - name: Drive the UI (camera, reasoning dial, screen tour)
         shell: bash
+        env:
+          # The XCTest driver sometimes needs longer than Maestro's default to come up on a cold runner.
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: "240000"
         run: |
           APP_PATH="$(find "$RUNNER_TEMP/DaimonDerivedData/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
           BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Info.plist")"

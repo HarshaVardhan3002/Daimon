@@ -12,7 +12,8 @@ appId: ${APP_ID}
       visible: "Sign in"
     file: _sign-in.yaml
 - takeScreenshot: ios-20-home
-- tapOn: "Message Daimon"
+- tapOn:
+    id: "composer-input"
 - inputText: "What makes cheese go bitter?"
 - takeScreenshot: ios-21-focused-composer
 - tapOn: "Send message"

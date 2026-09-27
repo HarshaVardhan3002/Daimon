@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, BackHandler, Image, Keyboard, NativeModules, Platform, Pressable, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Animated, { Easing, FadeIn, FadeOut, SlideInDown, SlideOutDown, runOnJS, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeOut, SlideInDown, SlideOutDown, runOnJS, useAnimatedReaction, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraSheet, type CameraSheetHandle, type CameraSheetRect } from '../src/chat/CameraSheet';
 import type { CapturedPhoto } from '../src/chat/cameraFlow';
@@ -261,6 +261,10 @@ export default function ChatScreen() {
     }), [cameraOpen, dialOpen, drawer, drawerOpen, drawerWidth, dragStart, menuVisible, settledByDrag]);
   const chatStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drawer.value * drawerWidth }] }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: (drawer.value - 1) * drawerWidth * 0.25 }], opacity: 0.4 + drawer.value * 0.6 }));
+  // A shut drawer leaves the view tree (display none): otherwise its buttons still take keyboard focus, and a Space
+  // typed while nothing is focused "clicked" the hidden Search button.
+  const [drawerShown, setDrawerShown] = useState(false);
+  useAnimatedReaction(() => drawer.value > 0.001, (shown, previous) => { if (shown !== previous) runOnJS(setDrawerShown)(shown); });
   const dimStyle = useAnimatedStyle(() => ({ opacity: drawer.value * (mode === 'dark' ? 0.55 : 0.3) }), [mode]);
 
   const fabStyle = useAnimatedStyle(() => {
@@ -279,7 +283,7 @@ export default function ChatScreen() {
 
   // The drawer gesture covers both panels, so an open drawer can also be swiped shut from the drawer itself.
   return <GestureDetector gesture={drawerGesture}><View style={{ flex: 1, backgroundColor: c.drawer }}>
-    <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, width: drawerWidth }, drawerStyle]} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}>
+    <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, width: drawerWidth, display: drawerShown ? 'flex' : 'none' }, drawerStyle]} accessibilityElementsHidden={!drawerOpen} importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}>
       <ChatDrawer width={drawerWidth} topInset={insets.top} bottomInset={insets.bottom} onClose={closeDrawer} onNewChat={newChat} busy={requestStatus === 'loading'} />
     </Animated.View>
     <Animated.View style={[{ flex: 1, backgroundColor: c.canvas, overflow: 'hidden' }, chatStyle]}>

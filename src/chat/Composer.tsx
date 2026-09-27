@@ -104,7 +104,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
         {/* iOS appends the placeholder to a text input's label, so there the placeholder alone names it. */}
         <AnimatedTextInput ref={inputRef} value={draft} onChangeText={setDraft} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
           placeholder={inChat ? t.replyPlaceholder : t.composerPlaceholder} placeholderTextColor={c.faint} keyboardAppearance={mode} multiline maxLength={5000}
-          accessibilityLabel={Platform.OS === 'ios' ? undefined : t.composerLabel} selectionColor={c.accent} cursorColor={c.accent}
+          testID="composer-input" accessibilityLabel={Platform.OS === 'ios' ? undefined : t.composerLabel} selectionColor={c.accent} cursorColor={c.accent}
           style={[{ color: c.text, fontFamily: font.regular, fontSize: 16, lineHeight: 22, maxHeight: expanded ? 200 : 48, textAlignVertical: 'top' }, inputStyle]} />
         <View pointerEvents="box-none" style={{ position: 'absolute', left: 4, right: 4, bottom: 4, height: ROW, flexDirection: 'row', alignItems: 'center' }}>
           <IconButton ref={plusRef} label={t.addAttachment} onPress={onPlus} disabled={loading} accessibilityState={{ expanded: plusOpen }} size={CONTROL} style={{ opacity: dialOpen ? 0 : 1 }}>
