@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { font, motion, radius, type } from '../src/design/tokens';
 import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useScreenStrings } from '../src/i18n/screens';
+import { closeDrawerBehind } from '../src/chat/chatController';
 import { activeChatTitle, hasActiveContent, openSavedConversation, useApp } from '../src/state/appStore';
 import { turnTime, type SavedConversation, type Turn } from '../src/state/types';
 import { IconButton } from '../src/ui/IconButton';
@@ -75,6 +76,7 @@ export default function SearchScreen() {
   }, [active, activeId, conversation, query, saved, title]);
   const selectChat = useCallback((chat: ChatResult) => {
     if (!chat.active) openSavedConversation(chat.id);
+    closeDrawerBehind();
     router.back();
   }, []);
 

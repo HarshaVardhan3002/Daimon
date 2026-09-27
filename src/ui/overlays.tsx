@@ -113,7 +113,8 @@ function MenuView({ spec }: { spec: MenuSpec & { id: number } }) {
   return <View style={{ position: 'absolute', inset: 0, zIndex: 900, elevation: 30 }} accessibilityViewIsModal>
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
     <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel="Close menu" />
-    <Animated.View onLayout={onLayout} style={[{ position: 'absolute', top: size ? top : -9999, left: size ? left : 0, minWidth: spec.minWidth ?? 216, maxWidth: Math.min(320, screenW - MENU_MARGIN * 2), borderRadius: radius.card, backgroundColor: c.surface, paddingVertical: 6, transformOrigin: origin, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12 }, panelStyle]}>
+    {/* The card claims its own touches: a tap on its header or padding must not fall through and close the menu. */}
+    <Animated.View onLayout={onLayout} onStartShouldSetResponder={() => true} style={[{ position: 'absolute', top: size ? top : -9999, left: size ? left : 0, minWidth: spec.minWidth ?? 216, maxWidth: Math.min(320, screenW - MENU_MARGIN * 2), borderRadius: radius.card, backgroundColor: c.surface, paddingVertical: 6, transformOrigin: origin, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12 }, panelStyle]}>
       {spec.header ? <Text style={{ ...type.labelRegular, color: c.muted, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 6 }}>{spec.header}</Text> : null}
       {spec.items.map(item => {
         if (item.kind === 'divider') return <View key={item.key} style={{ height: 1, marginVertical: 5, marginHorizontal: 16, backgroundColor: c.line }} />;
@@ -164,7 +165,7 @@ function SheetView({ spec }: { spec: SheetSpec & { id: number } }) {
   return <View style={{ position: 'absolute', inset: 0, zIndex: 800, elevation: 28 }} accessibilityViewIsModal>
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
     <Pressable style={{ position: 'absolute', inset: 0 }} onPress={close} accessibilityRole="button" accessibilityLabel="Close" />
-    <Animated.View onLayout={onLayout} style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: screenH * 0.88, backgroundColor: c.surface, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet, paddingBottom: insets.bottom + 8 }, panelStyle]}>
+    <Animated.View onLayout={onLayout} onStartShouldSetResponder={() => true} style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: screenH * 0.88, backgroundColor: c.surface, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet, paddingBottom: insets.bottom + 8 }, panelStyle]}>
       <GestureDetector gesture={drag}>
         <View style={{ paddingTop: 10, paddingBottom: spec.title ? 4 : 8 }}>
           <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: c.faint, opacity: 0.6 }} />
@@ -204,7 +205,7 @@ function DialogView({ spec }: { spec: DialogSpec & { id: number } }) {
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]} />
     <Pressable style={{ position: 'absolute', inset: 0 }} onPress={cancel} accessibilityRole="button" accessibilityLabel={spec.cancelLabel} />
     <KeyboardAvoidingView behavior="padding" pointerEvents="box-none" style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 28 }}>
-      <Animated.View style={[{ backgroundColor: c.surface, borderRadius: 28, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12 }, cardStyle]}>
+      <Animated.View onStartShouldSetResponder={() => true} style={[{ backgroundColor: c.surface, borderRadius: 28, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 12 }, cardStyle]}>
         <Text accessibilityRole="header" style={{ ...type.title, color: c.text }}>{spec.title}</Text>
         {spec.kind === 'confirm' && spec.message ? <Text style={{ ...type.labelRegular, color: c.muted, marginTop: 10 }}>{spec.message}</Text> : null}
         {spec.kind === 'prompt' ? <TextInput value={text} onChangeText={setText} autoFocus selectTextOnFocus placeholder={spec.placeholder} placeholderTextColor={c.faint} keyboardAppearance={mode} onSubmitEditing={accept} returnKeyType="done" maxLength={120} accessibilityLabel={spec.title}

@@ -12,7 +12,7 @@ import type { CapturedPhoto } from '../src/chat/cameraFlow';
 import { cameraAccess } from '../src/chat/cameraPermission';
 import { ChatDrawer } from '../src/chat/ChatDrawer';
 import { ChatHeader, HEADER_HEIGHT } from '../src/chat/ChatHeader';
-import { cancelEdit, chatUi, currentRequest, dismissRequestError, retryRequest, stopSpeech, syncRequestWithActiveChat, useChatUi } from '../src/chat/chatController';
+import { cancelEdit, chatUi, currentRequest, drawerCloseSignal, dismissRequestError, retryRequest, stopSpeech, syncRequestWithActiveChat, useChatUi } from '../src/chat/chatController';
 import { Composer, type ComposerHandle } from '../src/chat/Composer';
 import { DocumentAttachmentError, persistDocumentAttachment, supportedDocumentMimeType } from '../src/chat/documentAttachment';
 import { errorText } from '../src/chat/errorText';
@@ -24,6 +24,7 @@ import { motion, type } from '../src/design/tokens';
 import { usePalette, useThemeMode } from '../src/design/useTheme';
 import { useStrings } from '../src/i18n/strings';
 import { appStore, setDocumentAttachment, setImageAttachment, setReasoningMode, setThinkHarder, startNewChat, useApp } from '../src/state/appStore';
+import { useStore } from '../src/state/store';
 import { shouldShowGlobalChatError } from '../src/state/chatRequestFlow';
 import { Icon } from '../src/ui/icons';
 import { IconButton } from '../src/ui/IconButton';
@@ -71,6 +72,12 @@ export default function ChatScreen() {
   }, [drawer]);
   const openDrawer = useCallback(() => { Keyboard.dismiss(); haptic('selection'); settleDrawer(true); }, [settleDrawer]);
   const closeDrawer = useCallback(() => settleDrawer(false), [settleDrawer]);
+  const drawerCloseCount = useStore(drawerCloseSignal, state => state.count);
+  useEffect(() => {
+    if (!drawerCloseCount) return;
+    // Snap shut: the chat is revealed as the screen above fades away, so there is nothing to animate.
+    setDrawerOpen(false); drawer.value = 0;
+  }, [drawer, drawerCloseCount]);
 
   // ---- Plus menu and camera (the camera sheet grows out of the menu card and shrinks back into it).
   const [menuVisible, setMenuVisible] = useState(false);
@@ -196,7 +203,7 @@ export default function ChatScreen() {
       setKeyboardVisible(true);
       keyboardBounds.current = { top: event.endCoordinates.screenY, height: event.endCoordinates.height };
     });
-    const hide = Keyboard.addListener('keyboardDidHide', () => { keyboardBounds.current = null; keyboardScrim?.hide(); setKeyboardVisible(false); });
+    const hide = Keyboard.addListener('keyboardDidHide', () => { keyboardBounds.current = null; keyboardScrim?.hide(); setKeyboardVisible(false); composerRef.current?.blur(); });
     return () => { show.remove(); hide.remove(); };
   }, []);
   useEffect(() => {
@@ -240,6 +247,8 @@ export default function ChatScreen() {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
   }, []);
 
+  // Plain JS callback: a worklet must not capture RN's Keyboard object (Worklets can't copy it and the app crashes).
+  const settledByDrag = useCallback((open: boolean) => { setDrawerOpen(open); if (open) Keyboard.dismiss(); }, []);
   const drawerGesture = useMemo(() => Gesture.Pan()
     .activeOffsetX(drawerOpen ? -14 : 14).failOffsetY([-12, 12])
     .enabled(!cameraOpen && !dialOpen && !menuVisible)
@@ -248,9 +257,8 @@ export default function ChatScreen() {
     .onEnd(event => {
       const open = event.velocityX > 450 ? true : event.velocityX < -450 ? false : drawer.value > 0.5;
       drawer.value = withSpring(open ? 1 : 0, { ...motion.settle, velocity: event.velocityX / drawerWidth });
-      runOnJS(setDrawerOpen)(open);
-      if (open) runOnJS(Keyboard.dismiss)();
-    }), [cameraOpen, dialOpen, drawer, drawerOpen, drawerWidth, dragStart, menuVisible]);
+      runOnJS(settledByDrag)(open);
+    }), [cameraOpen, dialOpen, drawer, drawerOpen, drawerWidth, dragStart, menuVisible, settledByDrag]);
   const chatStyle = useAnimatedStyle(() => ({ transform: [{ translateX: drawer.value * drawerWidth }] }));
   const drawerStyle = useAnimatedStyle(() => ({ transform: [{ translateX: (drawer.value - 1) * drawerWidth * 0.25 }], opacity: 0.4 + drawer.value * 0.6 }));
   const dimStyle = useAnimatedStyle(() => ({ opacity: drawer.value * (mode === 'dark' ? 0.55 : 0.3) }), [mode]);
@@ -290,14 +298,14 @@ export default function ChatScreen() {
               <Icon name="arrow-down" size={19} color={c.text} />
             </IconButton>
           </Animated.View>
-          <StickyComposer bottomInset={insets.bottom}>
+          <StickyComposer bottomInset={insets.bottom} height={composerHeight}>
             {showGlobalError && requestError ? <Animated.View entering={FadeIn} exiting={FadeOut} accessibilityLiveRegion="polite" style={{ marginHorizontal: 16, marginBottom: 8, minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: c.surface, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={{ ...type.helper, flex: 1, color: c.muted }}>{errorText(locale, requestError)}</Text>
               {!requestError.startsWith('document_') ? <PressableScale onPress={() => retryRequest()} accessibilityRole="button" style={{ minHeight: 36, paddingHorizontal: 8, justifyContent: 'center' }}><Text style={{ ...type.label, fontSize: 13, color: c.accent }}>{t.retry}</Text></PressableScale> : null}
               <IconButton label={t.cancel} size={30} onPress={dismissRequestError}><Icon name="x" size={16} color={c.muted} /></IconButton>
             </Animated.View> : null}
             {legacyPending && requestStatus === 'idle' ? <View style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 16, backgroundColor: c.surface }}><Text style={{ ...type.helper, color: c.muted }}>{locale === 'de' ? 'Eine Anfrage aus einer früheren Version kann hier nicht wiederholt werden. Der Entwurf bleibt gespeichert.' : 'A request from an earlier version can’t be retried here. Its draft is still saved.'}</Text></View> : null}
-            <Composer ref={composerRef} plusRef={plusRef} onPlus={openMenu} onOpenDial={() => { haptic('selection'); setDialOpen(true); }} plusOpen={menuSheetOpen} dialOpen={dialOpen} height={composerHeight} bottomInset={insets.bottom} />
+            <Composer ref={composerRef} plusRef={plusRef} onPlus={openMenu} onOpenDial={() => { haptic('selection'); setDialOpen(true); }} plusOpen={menuSheetOpen} dialOpen={dialOpen} bottomInset={insets.bottom} />
           </StickyComposer>
           {menuVisible ? <PlusMenu sheetOpen={menuSheetOpen} interactive={menuInteractive} thinkHarder={thinkHarder} progress={menuProgress} originLeft={originLeft} originTop={originTop} targetTop={targetTop} handoff={handoff} covering={covering} onClose={closeMenu} onSelect={onMenuSelect} /> : null}
         </View>
@@ -321,11 +329,20 @@ export default function ChatScreen() {
 }
 
 /** The composer rides the keyboard; its bottom padding (the gesture bar) is given back while the keyboard is up. */
-function StickyComposer({ bottomInset, children }: { bottomInset: number; children: React.ReactNode }) {
+function StickyComposer({ bottomInset, height, children }: { bottomInset: number; height: SharedValue<number>; children: React.ReactNode }) {
+  const c = usePalette();
   const keyboard = useReanimatedKeyboardAnimation();
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: keyboard.height.value + keyboard.progress.value * bottomInset }] }), [bottomInset]);
-  return <Animated.View pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }, style]}>{children}</Animated.View>;
+  return <Animated.View onLayout={event => { height.value = event.nativeEvent.layout.height; }} pointerEvents="box-none" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }, style]}>
+    {/* Answers fade out behind the composer instead of showing through the gap below it. */}
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: -COMPOSER_FADE, bottom: 0 }}>
+      <View style={{ height: COMPOSER_FADE + 6, experimental_backgroundImage: `linear-gradient(180deg, ${c.canvas}00 0%, ${c.canvas} 100%)` }} />
+      <View style={{ flex: 1, backgroundColor: c.canvas }} />
+    </View>
+    {children}
+  </Animated.View>;
 }
+const COMPOSER_FADE = 20;
 
 /**
  * The turns, plus the ChatGPT "lift": a sent message scrolls up to sit under the header and the space below it is

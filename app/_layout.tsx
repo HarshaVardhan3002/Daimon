@@ -48,9 +48,11 @@ function RootNavigator() {
   const mode = useThemeMode();
   const c = usePalette();
   useEffect(() => { const timer = setTimeout(() => setFontTimeout(true), FONT_TIMEOUT_MS); return () => clearTimeout(timer); }, []);
-  useEffect(() => { void SystemUI.setBackgroundColorAsync(c.canvas).catch(() => undefined); }, [c.canvas]);
   const fontsReady = fontsLoaded || Boolean(fontError) || fontTimeout;
-  if (!fontsReady || hydration === 'loading' || !accountReady) return null;
+  const ready = fontsReady && hydration !== 'loading' && accountReady;
+  // Only once the app renders (under the splash overlay): earlier, a light canvas would flash between splash frames.
+  useEffect(() => { if (ready) void SystemUI.setBackgroundColorAsync(c.canvas).catch(() => undefined); }, [c.canvas, ready]);
+  if (!ready) return null;
   const healthy = hydration === 'ready';
   return <>
     <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
@@ -75,7 +77,7 @@ function RootNavigator() {
 export default function RootLayout() {
   return <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
-      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+      <KeyboardProvider>
         <RootNavigator />
       </KeyboardProvider>
     </SafeAreaProvider>

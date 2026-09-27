@@ -63,7 +63,7 @@ export default function SettingsScreen() {
           <Text style={{ ...type.title, fontSize: 28, lineHeight: 34, color: c.onAccent }}>{(displayName[0] || 'D').toLocaleUpperCase()}</Text>
         </View>
         <Text accessibilityRole="header" numberOfLines={1} style={{ ...type.title, color: c.text, marginTop: 12, maxWidth: '92%' }}>{displayName}</Text>
-        <Text style={{ ...type.helper, color: c.muted, marginTop: 3 }}>{participantId}</Text>
+        {displayName !== participantId ? <Text style={{ ...type.helper, color: c.muted, marginTop: 3 }}>{participantId}</Text> : null}
       </View>
 
       <SettingsGroup title={t.settings.myDaimon}>

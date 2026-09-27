@@ -1,6 +1,6 @@
 import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Image, Platform, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import Animated, { FadeIn, FadeOut, LinearTransition, ZoomIn, ZoomOut, interpolate, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import { Image, Platform, Text, TextInput, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition, ZoomIn, ZoomOut, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { font, motion, radius, type } from '../design/tokens';
 import { usePalette, useThemeMode } from '../design/useTheme';
 import { useStrings } from '../i18n/strings';
@@ -29,12 +29,10 @@ type Props = {
   onOpenDial: () => void;
   plusOpen: boolean;
   dialOpen: boolean;
-  /** Total height, for the message list's bottom inset. */
-  height: SharedValue<number>;
   bottomInset: number;
 };
 
-export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer({ plusRef, onPlus, onOpenDial, plusOpen, dialOpen, height, bottomInset }, ref) {
+export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer({ plusRef, onPlus, onOpenDial, plusOpen, dialOpen, bottomInset }, ref) {
   const c = usePalette(); const t = useStrings(); const mode = useThemeMode();
   const locale = useApp(state => state.locale);
   const draft = useApp(state => state.draft);
@@ -67,10 +65,16 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
     paddingBottom: interpolate(open.value, [0, 1], [13, ROW + 10]),
   }), [restRight]);
 
-  const onLayout = useCallback((event: LayoutChangeEvent) => { height.value = event.nativeEvent.layout.height; }, [height]);
+  // Editing a sent message opens the keyboard on it, after the long-press menu has closed and dismissed its own.
+  useEffect(() => {
+    if (!editing) return;
+    const timer = setTimeout(() => inputRef.current?.focus(), 260);
+    return () => clearTimeout(timer);
+  }, [editing]);
+
   const send = useCallback(() => { if (sendDraft() && !focused) inputRef.current?.blur(); }, [focused]);
 
-  return <View onLayout={onLayout} style={{ paddingTop: 6, paddingBottom: bottomInset + 8 }}>
+  return <View style={{ paddingTop: 6, paddingBottom: bottomInset + 8 }}>
     {editing ? <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)} style={{ marginHorizontal: 22, marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <Icon name="edit-2" size={15} color={c.accent} />
       <View style={{ flex: 1 }}><Text style={{ ...type.label, fontSize: 14, color: c.text }}>{t.editing}</Text><Text style={{ ...type.helper, fontSize: 12, color: c.muted }}>{t.editingHint}</Text></View>

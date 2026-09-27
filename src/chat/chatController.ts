@@ -31,6 +31,10 @@ type ChatUi = {
 export const chatUi = createStore<ChatUi>({ requestStatus: 'idle', requestError: null, speakingTurnId: null, editingTurnId: null, pinnedTurnId: null });
 export function useChatUi<S>(selector: (state: ChatUi) => S): S { return useStore(chatUi, selector); }
 
+/** Screens above the chat (search) bump this when they open a chat, so it shows with its drawer already shut. */
+export const drawerCloseSignal = createStore({ count: 0 });
+export function closeDrawerBehind(): void { drawerCloseSignal.set({ count: drawerCloseSignal.get().count + 1 }); }
+
 /** Answers that arrived in this session reveal with motion; restored ones appear at rest. */
 export const freshAnswers = new Set<string>();
 
